@@ -142,5 +142,4 @@ This port is based on the simpler version, adapted to use the `arduino-mcp2515` 
 
 - [ ] Add TWAI (CAN-B) support for dual-bus monitoring
 - [ ] Store settings in ESP32's NVS (flash) instead of RAM
-- [ ] Add WiFi web interface for remote monitoring
 - [ ] Port the full V2 features (SOC calculation, charger control, etc.)
