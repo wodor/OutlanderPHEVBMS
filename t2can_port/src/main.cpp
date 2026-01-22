@@ -28,6 +28,8 @@
 #include "bms_data.h"
 #include "can_handler.h"
 #include "serial_menu.h"
+#include "wifi_handler.h"
+#include "web_server.h"
 
 // =============================================================================
 // TIMING STATE
@@ -52,6 +54,7 @@
  */
 static unsigned long s_lastCanSendTime = 0;
 static unsigned long s_lastDisplayTime = 0;
+static unsigned long s_lastWifiPollTime = 0;
 
 // =============================================================================
 // SETUP
@@ -100,6 +103,12 @@ void setup() {
         }
     }
 
+    // Initialize WiFi
+    wifiInit();
+
+    // Initialize web server (runs in background FreeRTOS task)
+    webServerInit();
+
     Serial.println();
     Serial.println("Commands: 'b' = toggle balancing, 'd' = debug, 'h' = help");
     Serial.println("Waiting for BMS data...");
@@ -139,6 +148,12 @@ void loop() {
     if (millis() - s_lastDisplayTime >= INTERVAL_DISPLAY_MS) {
         s_lastDisplayTime = millis();
         serialPrintPackInfo();
+    }
+
+    // 5. Periodic task: Poll WiFi state every 1000ms
+    if (millis() - s_lastWifiPollTime >= INTERVAL_WIFI_POLL_MS) {
+        s_lastWifiPollTime = millis();
+        wifiPoll();
     }
 
     /**

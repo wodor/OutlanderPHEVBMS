@@ -55,8 +55,9 @@ struct BmsState {
     long    lowestCellMv;               // Lowest cell voltage across entire pack
     bool    balancingEnabled;           // Are we sending balance commands?
     bool    debugMode;                  // Print raw CAN frames?
+    unsigned long lastCanMessageTime;   // millis() when last CAN message received
 
-    BmsState() : lowestCellMv(DEFAULT_LOW_CELL_MV), balancingEnabled(false), debugMode(false) {}
+    BmsState() : lowestCellMv(DEFAULT_LOW_CELL_MV), balancingEnabled(false), debugMode(false), lastCanMessageTime(0) {}
 
     /**
      * Find the lowest cell voltage in the pack

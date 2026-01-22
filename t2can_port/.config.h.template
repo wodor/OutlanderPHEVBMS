@@ -1,0 +1,3 @@
+// WiFi credentials template - Copy to .config.h and edit with your details
+#define WIFI_SSID "your_wifi_ssid_here"
+#define WIFI_PASSWORD "your_password_here"

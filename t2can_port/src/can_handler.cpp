@@ -62,6 +62,7 @@ static void decodeCanFrame() {
 
     // Mark this CMU as present (we received data from it)
     g_bmsState.modules[cmuIndex].present = true;
+    g_bmsState.lastCanMessageTime = millis();
 
     // Get reference to this CMU's data (avoids repeated array access)
     CmuData& cmu = g_bmsState.modules[cmuIndex];

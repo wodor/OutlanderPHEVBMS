@@ -104,3 +104,29 @@ constexpr unsigned long INTERVAL_DISPLAY_MS   = 500;   // Update display every 5
 
 constexpr long DEFAULT_LOW_CELL_MV = 5000;  // Initial "lowest cell" value (impossibly high)
                                              // Will be replaced by actual readings
+
+// =============================================================================
+// WIFI CONFIGURATION
+// =============================================================================
+/**
+ * WiFi credentials are stored in .config.h file which is excluded from git.
+ * Use .config.h.template as a reference to create your own .config.h file.
+ * 
+ * If the file doesn't exist, empty defaults are used, which can still be
+ * overridden via build flags in platformio.ini:
+ *   build_flags = -D WIFI_SSID=\"MyNetwork\" -D WIFI_PASSWORD=\"MyPassword\"
+ */
+// Include private configuration if available
+#if __has_include("../.config.h")
+    #include "../.config.h"
+#else
+    #ifndef WIFI_SSID
+    #define WIFI_SSID ""
+    #endif
+
+    #ifndef WIFI_PASSWORD
+    #define WIFI_PASSWORD ""
+    #endif
+#endif
+
+constexpr unsigned long INTERVAL_WIFI_POLL_MS = 1000;  // Check WiFi state every 1s
