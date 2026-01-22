@@ -13,6 +13,7 @@
 #include "web_server.h"
 #include "config.h"
 #include "bms_data.h"
+#include "protection.h"
 #include <ESPAsyncWebServer.h>
 
 // Web server instance on port 80
@@ -83,7 +84,7 @@ static String buildFullBmsJson() {
 }
 
 /**
- * Build JSON summary.
+ * Build JSON summary with V2 features.
  */
 static String buildSummaryJson() {
     int presentCount = 0;
@@ -109,8 +110,18 @@ static String buildSummaryJson() {
     String json = "{";
     json += "\"modulesPresent\":" + String(presentCount) + ",";
     json += "\"lowestCellMv\":" + String(g_bmsState.lowestCellMv) + ",";
+    json += "\"highestCellMv\":" + String(g_bmsState.highestCellMv) + ",";
+    json += "\"avgCellVoltage\":" + String(g_bmsState.avgCellVoltage, 3) + ",";
+    json += "\"packVoltage\":" + String(g_bmsState.packVoltage, 2) + ",";
+    json += "\"lowestTemp\":" + String(g_bmsState.lowestTemp, 1) + ",";
+    json += "\"highestTemp\":" + String(g_bmsState.highestTemp, 1) + ",";
+    json += "\"avgTemp\":" + String(g_bmsState.avgTemp, 1) + ",";
+    json += "\"soc\":" + String(g_bmsState.soc) + ",";
+    json += "\"currentAmps\":" + String(g_bmsState.currentAmps, 2) + ",";
+    json += "\"avgCurrentAmps\":" + String(g_bmsState.avgCurrentAmps, 2) + ",";
     json += "\"balancingEnabled\":" + String(g_bmsState.balancingEnabled ? "true" : "false") + ",";
     json += "\"cellsBalancing\":" + String(balancingCount) + ",";
+    json += "\"protectionStatus\":\"" + String(protectionGetStatus()) + "\",";
     json += "\"msSinceCanMsg\":" + String(msSinceCan);
     json += "}";
 
@@ -209,8 +220,32 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             <div class="summary-label">CAN Bus</div>
         </div>
         <div class="summary-item">
+            <div class="summary-value" id="soc">--</div>
+            <div class="summary-label">SOC (%)</div>
+        </div>
+        <div class="summary-item">
+            <div class="summary-value" id="packVoltage">--</div>
+            <div class="summary-label">Pack Voltage (V)</div>
+        </div>
+        <div class="summary-item">
+            <div class="summary-value" id="current">--</div>
+            <div class="summary-label">Current (A)</div>
+        </div>
+        <div class="summary-item">
             <div class="summary-value" id="lowestCell">--</div>
             <div class="summary-label">Lowest Cell (mV)</div>
+        </div>
+        <div class="summary-item">
+            <div class="summary-value" id="highestCell">--</div>
+            <div class="summary-label">Highest Cell (mV)</div>
+        </div>
+        <div class="summary-item">
+            <div class="summary-value" id="avgTemp">--</div>
+            <div class="summary-label">Avg Temp (°C)</div>
+        </div>
+        <div class="summary-item">
+            <div class="summary-value" id="protection">--</div>
+            <div class="summary-label">Protection</div>
         </div>
         <div class="summary-item">
             <div class="summary-value" id="modulesOnline">--</div>
@@ -252,6 +287,23 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             }
 
             document.getElementById('lowestCell').textContent = data.lowestCellMv;
+            document.getElementById('highestCell').textContent = summary.highestCellMv;
+            document.getElementById('packVoltage').textContent = summary.packVoltage;
+            document.getElementById('soc').textContent = summary.soc + '%';
+            document.getElementById('current').textContent = summary.avgCurrentAmps;
+            document.getElementById('avgTemp').textContent = summary.avgTemp;
+            
+            // Protection status with color
+            const protEl = document.getElementById('protection');
+            protEl.textContent = summary.protectionStatus;
+            if (summary.protectionStatus === 'OK') {
+                protEl.style.color = '#4ade80';
+            } else if (summary.protectionStatus.includes('WARNING')) {
+                protEl.style.color = '#f59e0b';
+            } else {
+                protEl.style.color = '#ef4444';
+            }
+            
             document.getElementById('balanceBtn').textContent = 'Balancing: ' + (balancingEnabled ? 'ON' : 'OFF');
             document.getElementById('balanceBtn').className = balancingEnabled ? '' : 'off';
 
