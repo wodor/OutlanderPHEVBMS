@@ -142,4 +142,116 @@ This port is based on the simpler version, adapted to use the `arduino-mcp2515` 
 
 - [ ] Add TWAI (CAN-B) support for dual-bus monitoring
 - [ ] Store settings in ESP32's NVS (flash) instead of RAM
-- [ ] Port the full V2 features (SOC calculation, charger control, etc.)
+- [x] Port the full V2 features (SOC calculation, charger control, etc.)
+  - [x] SOC calculation with coulomb-counting and voltage fallback
+  - [x] Current sensing framework (analog and CAN)
+  - [x] Protection system (voltage/temp limits)
+  - [x] Pack statistics tracking
+  - [x] Enhanced web dashboard and serial interface
+  - [ ] Physical current sensor integration (requires hardware)
+  - [ ] Charger control (intentionally skipped)
+  - [ ] PWM gauge output
+  - [ ] Full settings persistence to NVS
+
+## V2 Features Implementation
+
+### State of Charge (SOC) Calculation
+
+**Implementation**: `src/soc_calc.h` and `src/soc_calc.cpp`
+
+The SOC system uses coulomb-counting (amp-hour integration) as the primary method, with voltage-based calculation as a fallback. Key features:
+
+- **Coulomb Counting**: Integrates current over time to track charge/discharge
+  ```cpp
+  SOC = ((ampSeconds * 0.27777777777778) / (capacity * parallelStrings * 1000)) * 100
+  ```
+- **Voltage-Based Fallback**: Linear interpolation between configured voltage points
+- **NVS Persistence**: SOC is saved every 60 seconds and restored on boot
+- **Manual Reset**: Can be reset to 100% via serial command 'r'
+
+### Current Sensing
+
+**Implementation**: `src/current_sense.h` and `src/current_sense.cpp`
+
+Framework supports multiple sensor types:
+- **Dual-range analog**: High precision for low currents, wide range for high currents
+- **Single-range analog**: Simpler configuration
+- **CAN bus sensors**: LEM CAB300/500, IsaScale, Victron Lynx
+
+Features:
+- Low-pass exponential moving average filter
+- Configurable dead-band for noise rejection
+- Automatic range switching for dual-range sensors
+- Offset calibration support
+
+**Note**: Current sensor hardware integration requires actual ADC pin configuration and testing.
+
+### Protection System
+
+**Implementation**: `src/protection.h` and `src/protection.cpp`
+
+Monitors and enforces safety limits:
+- **Overvoltage**: Cell voltage exceeds `overVoltage` threshold
+- **Undervoltage**: Cell voltage below `underVoltage` (with debounce)
+- **Overtemperature**: Temperature above `overTemp`
+- **Undertemperature**: Temperature below `underTemp`
+- **Cell Imbalance**: Voltage difference exceeds `cellGap`
+
+Each protection has hysteresis to prevent oscillation. Status reported via:
+- Serial console: `protectionGetStatus()`
+- Web dashboard: "Protection" field
+- API: `/api/summary` endpoint
+
+### Pack Statistics
+
+**Implementation**: Enhanced `BmsState.updatePackStatistics()` in `src/bms_data.h`
+
+Tracks across all modules:
+- Lowest/highest/average cell voltages
+- Total pack voltage
+- Lowest/highest/average temperatures
+- Cell voltage delta (imbalance)
+
+Updated periodically and displayed in serial and web interfaces.
+
+### Data Structures
+
+**BmsSettings** (`src/bms_data.h`): Configuration parameters
+- Voltage limits (per cell)
+- Temperature limits
+- Current limits
+- Battery pack configuration (cells, capacity)
+- SOC voltage curve
+- Current sensor configuration
+- Protection thresholds
+
+**BmsState** (`src/bms_data.h`): Runtime state
+- CMU data (voltages, temps, balance status)
+- Pack statistics (min/max/avg)
+- SOC tracking (%, amp-seconds)
+- Current measurements
+- Protection flags
+- Timing variables
+
+### Integration
+
+**Main Loop** (`src/main.cpp`): Periodic tasks
+- **50ms**: Update current sensing
+- **100ms**: Update SOC calculation
+- **400ms**: Send CAN balance command
+- **500ms**: Check protection limits, update display
+- **1000ms**: Poll WiFi
+- **60000ms**: Save SOC to NVS
+
+**Serial Interface** (`src/serial_menu.cpp`): Enhanced display
+- Pack summary with SOC, voltage, current, temps
+- Detailed per-module statistics
+- Protection status
+- Commands: balance toggle, SOC reset, detailed view
+
+**Web Dashboard** (`src/web_server.cpp`): Real-time monitoring
+- 10 summary metrics (SOC, voltage, current, temps, protection)
+- Color-coded cell display
+- Module temperatures
+- Auto-refresh every 1 second
+- API endpoints for programmatic access
