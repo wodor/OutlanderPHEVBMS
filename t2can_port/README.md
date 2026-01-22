@@ -153,7 +153,8 @@ t2can_port/
 
 ## More Information
 
-See `AGENTS.md` for detailed development notes, hardware specifications, and CAN protocol documentation.
+- See `AGENTS.md` for detailed development notes, hardware specifications, and CAN protocol documentation.
+- See `../docs/REMOTE_LOGGING_PLAN.md` for comprehensive remote logging implementation plan with IoT standards and best practices.
 
 ## Credits
 
