@@ -6,6 +6,8 @@
 #include "serial_menu.h"
 #include "config.h"
 #include "bms_data.h"
+#include "soc_calc.h"
+#include "protection.h"
 
 // =============================================================================
 // COMMAND HANDLERS
@@ -30,12 +32,25 @@ static void handleCommand(char cmd) {
             Serial.println(g_bmsState.debugMode ? "ON (showing raw CAN frames)" : "OFF");
             break;
 
+        case 'r':  // Reset SOC to 100%
+            Serial.println();
+            Serial.println("[CMD] Resetting SOC to 100%");
+            socReset(100);
+            break;
+
+        case 's':  // Show detailed statistics
+            Serial.println();
+            printDetailedStats();
+            break;
+
         case 'h':  // Help
         case '?':
             Serial.println();
             Serial.println("=== Commands ===");
             Serial.println("  b - Toggle cell balancing");
             Serial.println("  d - Toggle debug mode (show raw CAN)");
+            Serial.println("  r - Reset SOC to 100%");
+            Serial.println("  s - Show detailed statistics");
             Serial.println("  h - Show this help");
             break;
 
@@ -70,8 +85,8 @@ void serialProcessInput() {
 }
 
 void serialPrintPackInfo() {
-    // Update lowest cell calculation before display
-    g_bmsState.updateLowestCell();
+    // Update pack statistics before display
+    g_bmsState.updatePackStatistics();
 
     Serial.println();
     Serial.println("================== OUTLANDER BMS STATUS ==================");
@@ -84,6 +99,32 @@ void serialPrintPackInfo() {
         return;
     }
 
+    // Pack summary with V2 features
+    Serial.println("-----------------------------------------------------------");
+    Serial.printf("Pack Voltage:    %.2fV\n", g_bmsState.packVoltage);
+    Serial.printf("Lowest cell:     %ld mV (%.3fV)\n", g_bmsState.lowestCellMv, g_bmsState.lowestCellMv / 1000.0f);
+    Serial.printf("Highest cell:    %ld mV (%.3fV)\n", g_bmsState.highestCellMv, g_bmsState.highestCellMv / 1000.0f);
+    Serial.printf("Cell delta:      %ld mV (%.3fV)\n", 
+                  g_bmsState.highestCellMv - g_bmsState.lowestCellMv,
+                  (g_bmsState.highestCellMv - g_bmsState.lowestCellMv) / 1000.0f);
+    Serial.printf("Avg cell:        %.3fV\n", g_bmsState.avgCellVoltage);
+    Serial.println("-----------------------------------------------------------");
+    Serial.printf("Temperature:     %.1fC (low) / %.1fC (avg) / %.1fC (high)\n",
+                  g_bmsState.lowestTemp, g_bmsState.avgTemp, g_bmsState.highestTemp);
+    Serial.println("-----------------------------------------------------------");
+    Serial.printf("SOC:             %d%%\n", g_bmsState.soc);
+    Serial.printf("Current:         %.2fA (avg: %.2fA)\n", g_bmsState.currentAmps, g_bmsState.avgCurrentAmps);
+    Serial.printf("Amp-hours:       %.2fAh\n", g_bmsState.ampSeconds * 0.27777777777778f / 1000.0f);
+    Serial.println("-----------------------------------------------------------");
+    Serial.printf("Balancing:       %s\n", g_bmsState.balancingEnabled ? "ENABLED" : "disabled");
+    Serial.printf("Protection:      %s\n", protectionGetStatus());
+    Serial.println("===========================================================");
+}
+
+static void printDetailedStats() {
+    Serial.println();
+    Serial.println("================= DETAILED STATISTICS ====================");
+    
     // Print each present module
     for (int m = 0; m < BMS_MODULE_COUNT; m++) {
         const CmuData& cmu = g_bmsState.modules[m];
@@ -128,10 +169,6 @@ void serialPrintPackInfo() {
         }
         Serial.println();
     }
-
-    // Pack summary
-    Serial.println("-----------------------------------------------------------");
-    Serial.printf("Lowest cell: %ld mV\n", g_bmsState.lowestCellMv);
-    Serial.printf("Balancing:   %s\n", g_bmsState.balancingEnabled ? "ENABLED" : "disabled");
+    
     Serial.println("===========================================================");
 }

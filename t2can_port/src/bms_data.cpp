@@ -30,3 +30,9 @@
  * That's tiny compared to ESP32's 320KB RAM.
  */
 BmsState g_bmsState;
+
+/**
+ * Global BMS settings with default values
+ * Settings can be persisted to NVS (ESP32 non-volatile storage)
+ */
+BmsSettings g_bmsSettings;
