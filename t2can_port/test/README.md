@@ -45,6 +45,41 @@ Tests for current sensing module:
 - **test_current_sensor_config**: Validates configuration for all sensor types
 - **test_current_sensor_settings**: Verifies default sensor settings
 
+### test_safety_critical.cpp ⚠️ **SAFETY-CRITICAL**
+Edge case tests focused on preventing fire hazards and system failures:
+
+**Integer Overflow/Underflow:**
+- **test_soc_extreme_current_overflow**: Tests SOC with 1000A charging for 1 hour
+- **test_soc_extreme_discharge_underflow**: Tests SOC with -1000A discharge
+- **test_voltage_extreme_values**: Tests 65V cell voltage detection
+- **test_temperature_extreme_values**: Tests extreme temperature readings
+
+**millis() Rollover (49.7 day boundary):**
+- **test_soc_millis_rollover**: Validates SOC calculation across millis() rollover
+- **test_protection_millis_rollover**: Validates debounce timers across rollover
+
+**Division by Zero:**
+- **test_soc_zero_capacity**: Tests SOC with capacityAh = 0
+- **test_current_sense_zero_conversion**: Tests current with zero conversion factor
+- **test_pack_voltage_zero_strings**: Tests voltage calculation with zero parallel strings
+
+**Float to Int Conversion:**
+- **test_soc_float_to_int_overflow**: Tests large float values converted to int
+
+**Array Bounds:**
+- **test_module_array_bounds**: Validates module array limits (8 modules)
+- **test_cell_array_bounds**: Validates cell voltage array limits (8 cells)
+- **test_temperature_array_bounds**: Validates temperature array limits (3 temps)
+
+**Concurrent Access:**
+- **test_concurrent_soc_and_statistics**: Tests simultaneous SOC and statistics updates
+- **test_concurrent_protection_and_voltage_update**: Tests protection during voltage changes
+
+**ESP32-S3 Specific:**
+- **test_memory_usage**: Validates structures fit in ESP32-S3 RAM (~400KB)
+- **test_no_deep_recursion**: Ensures no stack overflow (8KB default stack)
+- **test_float_operations_accuracy**: Validates FPU operations produce correct results
+
 ## Running Tests
 
 ### Native Testing (on development machine)
@@ -104,6 +139,32 @@ The test suite covers:
 - ✅ Current sensing framework
 - ✅ Data structure initialization and defaults
 - ✅ Edge cases and boundary conditions
+- ✅ **Safety-critical scenarios (overflow, rollover, division by zero, etc.)**
+
+## Safety Features Added
+
+Based on safety-critical testing, the following guards were added to production code:
+
+1. **SOC Calculation (`soc_calc.cpp`)**:
+   - Current clamping to ±1000A to prevent overflow
+   - Time delta clamping to 1 hour to handle missed updates
+   - ampSeconds clamping to ±1e9 to prevent infinity
+   - Division by zero checks for capacity
+   - NaN/Inf detection with voltage fallback
+
+2. **Current Sensing (`current_sense.cpp`)**:
+   - Division by zero protection in conversion factors
+   - NaN/Inf detection in measurements
+   - Current clamping to ±1000A
+   - Filtered current validation
+
+3. **Protection System (`protection.cpp`)**:
+   - Extreme voltage detection (>10V per cell)
+   - NaN/Inf detection in voltage and temperature
+   - millis() rollover handling in debounce timers
+
+4. **Pack Voltage Calculation (`bms_data.h`)**:
+   - Division by zero protection for parallel strings
 
 ## Adding New Tests
 
@@ -122,7 +183,7 @@ test_soc_reset:PASS
 test_overvoltage_detection:PASS
 ...
 -----------------------
-10 Tests 0 Failures 0 Ignored
+48 Tests 0 Failures 0 Ignored
 OK
 ```
 
@@ -132,6 +193,7 @@ OK
 - Some tests include `delay()` calls for debounce simulation - these may need adjustment based on actual timing
 - Current sensing tests use placeholder ADC values since physical hardware isn't available in test environment
 - NVS persistence is not tested (requires actual flash storage on hardware)
+- **Safety-critical tests prevent conditions that could cause fire, memory corruption, or system crashes**
 
 ## Future Enhancements
 
@@ -140,3 +202,4 @@ OK
 - [ ] Add mock objects for hardware dependencies
 - [ ] Add performance/timing tests
 - [ ] Add tests for web API endpoints
+- [ ] Add stress tests for long-term stability (>49.7 days)

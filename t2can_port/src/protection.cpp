@@ -39,6 +39,25 @@ bool protectionCheck() {
     float lowTemp = g_bmsState.lowestTemp;
     float highTemp = g_bmsState.highestTemp;
     
+    // SAFETY: Validate voltage readings are in reasonable range
+    // Extreme values (>10V per cell) indicate sensor failure or memory corruption
+    if (highCellV > 10.0f) {
+        Serial.printf("[PROTECTION] CRITICAL: Voltage reading exceeds safety limit: %.3fV\n", highCellV);
+        s_overVoltFault = true;
+        return false; // Immediate fault
+    }
+    
+    // SAFETY: Check for NaN or infinity in measurements
+    if (isnan(highCellV) || isinf(highCellV) || isnan(lowCellV) || isinf(lowCellV)) {
+        Serial.println("[PROTECTION] CRITICAL: Invalid voltage measurement");
+        return false; // Immediate fault
+    }
+    
+    if (isnan(highTemp) || isinf(highTemp) || isnan(lowTemp) || isinf(lowTemp)) {
+        Serial.println("[PROTECTION] CRITICAL: Invalid temperature measurement");
+        return false; // Immediate fault
+    }
+    
     // Check overvoltage
     if (highCellV > g_bmsSettings.overVoltage) {
         if (!s_overVoltFault) {
@@ -57,13 +76,17 @@ bool protectionCheck() {
     if (lowCellV < g_bmsSettings.underVoltage) {
         if (s_underVoltTime == 0) {
             s_underVoltTime = millis();
-        } else if (millis() - s_underVoltTime > FAULT_DEBOUNCE_MS) {
-            if (!s_underVoltFault) {
-                s_underVoltFault = true;
-                Serial.printf("[PROTECTION] UNDERVOLTAGE FAULT: %.3fV < %.3fV\n", 
-                             lowCellV, g_bmsSettings.underVoltage);
+        } else {
+            // SAFETY: Handle millis() rollover in debounce calculation
+            unsigned long elapsed = millis() - s_underVoltTime;
+            if (elapsed > FAULT_DEBOUNCE_MS) {
+                if (!s_underVoltFault) {
+                    s_underVoltFault = true;
+                    Serial.printf("[PROTECTION] UNDERVOLTAGE FAULT: %.3fV < %.3fV\n", 
+                                 lowCellV, g_bmsSettings.underVoltage);
+                }
+                allOk = false;
             }
-            allOk = false;
         }
     } else if (lowCellV > (g_bmsSettings.underVoltage + g_bmsSettings.dischargeHysteresis)) {
         // Clear with hysteresis

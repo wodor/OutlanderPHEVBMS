@@ -50,15 +50,44 @@ void socUpdate() {
     unsigned long currentTime = millis();
     unsigned long deltaMs = currentTime - g_bmsState.lastSocUpdate;
     
+    // SAFETY: Handle millis() rollover (happens every 49.7 days)
+    // Unsigned arithmetic handles rollover correctly
     if (deltaMs == 0) {
         return; // No time has passed
+    }
+    
+    // SAFETY: Limit deltaMs to prevent overflow from missed updates
+    // Max 1 hour (3.6M ms) to prevent arithmetic issues
+    if (deltaMs > 3600000) {
+        deltaMs = 3600000;
+        Serial.println("[SOC] WARNING: Large time delta detected, clamping to 1 hour");
     }
     
     // Update amp-seconds based on current flow
     // currentAmps is positive for charging, negative for discharging
     // deltaMs is in milliseconds, so divide by 1000 to get seconds
     float deltaSeconds = deltaMs / 1000.0f;
-    g_bmsState.ampSeconds += g_bmsState.currentAmps * deltaSeconds;
+    
+    // SAFETY: Limit current to reasonable values to prevent overflow
+    float clampedCurrent = g_bmsState.currentAmps;
+    if (clampedCurrent > 1000.0f) {
+        clampedCurrent = 1000.0f;
+        Serial.println("[SOC] WARNING: Excessive current detected, clamping to 1000A");
+    } else if (clampedCurrent < -1000.0f) {
+        clampedCurrent = -1000.0f;
+        Serial.println("[SOC] WARNING: Excessive discharge detected, clamping to -1000A");
+    }
+    
+    g_bmsState.ampSeconds += clampedCurrent * deltaSeconds;
+    
+    // SAFETY: Prevent ampSeconds from going to infinity
+    if (g_bmsState.ampSeconds > 1e9f) {
+        g_bmsState.ampSeconds = 1e9f;
+        Serial.println("[SOC] WARNING: ampSeconds overflow, clamping");
+    } else if (g_bmsState.ampSeconds < -1e9f) {
+        g_bmsState.ampSeconds = -1e9f;
+        Serial.println("[SOC] WARNING: ampSeconds underflow, clamping");
+    }
     
     // Calculate SOC from amp-seconds
     // Formula from V2: SOC = ((ampsecond * 0.27777777777778) / (CAP * Pstrings * 1000)) * 100
@@ -66,20 +95,40 @@ void socUpdate() {
     if (g_bmsSettings.useVoltageSoc || g_bmsSettings.currentSensorType == 0) {
         // Voltage-based SOC or no current sensor
         g_bmsState.soc = socCalculateFromVoltage();
-        // Update amp-seconds to match voltage-based SOC
-        g_bmsState.ampSeconds = (g_bmsState.soc * g_bmsSettings.capacityAh * 
-                                  g_bmsSettings.parallelStrings * 1000.0f) / 0.27777777777778f;
+        
+        // SAFETY: Validate capacity before division
+        if (g_bmsSettings.capacityAh > 0 && g_bmsSettings.parallelStrings > 0) {
+            // Update amp-seconds to match voltage-based SOC
+            g_bmsState.ampSeconds = (g_bmsState.soc * g_bmsSettings.capacityAh * 
+                                      g_bmsSettings.parallelStrings * 1000.0f) / 0.27777777777778f;
+        }
     } else {
         // Coulomb-counting based SOC
-        float totalCapacityAs = g_bmsSettings.capacityAh * g_bmsSettings.parallelStrings * 1000.0f;
-        g_bmsState.soc = (int)((g_bmsState.ampSeconds * 0.27777777777778f / totalCapacityAs) * 100.0f);
+        // SAFETY: Check for zero capacity to prevent division by zero
+        if (g_bmsSettings.capacityAh <= 0 || g_bmsSettings.parallelStrings <= 0) {
+            Serial.println("[SOC] ERROR: Invalid capacity configuration, using voltage-based SOC");
+            g_bmsState.soc = socCalculateFromVoltage();
+        } else {
+            float totalCapacityAs = g_bmsSettings.capacityAh * g_bmsSettings.parallelStrings * 1000.0f;
+            float socFloat = (g_bmsState.ampSeconds * 0.27777777777778f / totalCapacityAs) * 100.0f;
+            
+            // SAFETY: Check for NaN or infinity before casting to int
+            if (isnan(socFloat) || isinf(socFloat)) {
+                Serial.println("[SOC] ERROR: Invalid SOC calculation, using voltage fallback");
+                g_bmsState.soc = socCalculateFromVoltage();
+            } else {
+                g_bmsState.soc = (int)socFloat;
+            }
+        }
     }
     
     // Limit SOC to 0-100%
     if (g_bmsState.soc > 100) {
         g_bmsState.soc = 100;
         // Reset amp-seconds to full capacity
-        g_bmsState.ampSeconds = (g_bmsSettings.capacityAh * g_bmsSettings.parallelStrings * 1000.0f) / 0.27777777777778f;
+        if (g_bmsSettings.capacityAh > 0 && g_bmsSettings.parallelStrings > 0) {
+            g_bmsState.ampSeconds = (g_bmsSettings.capacityAh * g_bmsSettings.parallelStrings * 1000.0f) / 0.27777777777778f;
+        }
     }
     
     if (g_bmsState.soc < 0) {

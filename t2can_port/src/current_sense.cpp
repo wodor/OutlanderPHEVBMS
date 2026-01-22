@@ -57,12 +57,25 @@ void currentSenseUpdate() {
             if (abs(mv1) < g_bmsSettings.currentDeadband) mv1 = 0.0f;
             if (abs(mv2) < g_bmsSettings.currentDeadband) mv2 = 0.0f;
             
+            // SAFETY: Prevent division by zero in current conversion
+            float current1 = 0.0f;
+            float current2 = 0.0f;
+            
+            if (g_bmsSettings.conversionLow > 0.01f) {
+                current1 = mv1 / g_bmsSettings.conversionLow;   // Low range
+            } else {
+                Serial.println("[CURRENT] ERROR: Invalid conversionLow, defaulting to 0A");
+            }
+            
+            if (g_bmsSettings.conversionHigh > 0.01f) {
+                current2 = mv2 / g_bmsSettings.conversionHigh;  // High range
+            } else {
+                Serial.println("[CURRENT] ERROR: Invalid conversionHigh, defaulting to 0A");
+            }
+            
             // Select range based on current magnitude
             // Use low range for small currents (higher resolution)
             // Use high range for large currents (wider range)
-            float current1 = mv1 / g_bmsSettings.conversionLow;   // Low range
-            float current2 = mv2 / g_bmsSettings.conversionHigh;  // High range
-            
             if (abs(current1 * 1000.0f) < g_bmsSettings.rangeChangeCurrent) {
                 rawCurrent = current1;
                 g_bmsState.currentSensorRange = 1;  // Low range
@@ -88,7 +101,13 @@ void currentSenseUpdate() {
             
             if (abs(mv1) < g_bmsSettings.currentDeadband) mv1 = 0.0f;
             
-            rawCurrent = mv1 / g_bmsSettings.conversionHigh;
+            // SAFETY: Prevent division by zero
+            if (g_bmsSettings.conversionHigh > 0.01f) {
+                rawCurrent = mv1 / g_bmsSettings.conversionHigh;
+            } else {
+                Serial.println("[CURRENT] ERROR: Invalid conversionHigh, defaulting to 0A");
+                rawCurrent = 0.0f;
+            }
             g_bmsState.currentSensorRange = 1;
             break;
         }
@@ -101,6 +120,26 @@ void currentSenseUpdate() {
     
     // Apply exponential moving average filter
     s_filteredCurrent = s_filteredCurrent * (1.0f - FILTER_ALPHA) + rawCurrent * FILTER_ALPHA;
+    
+    // SAFETY: Check for NaN or infinity in current measurements
+    if (isnan(rawCurrent) || isinf(rawCurrent)) {
+        Serial.println("[CURRENT] ERROR: Invalid current reading, resetting to 0A");
+        rawCurrent = 0.0f;
+    }
+    
+    if (isnan(s_filteredCurrent) || isinf(s_filteredCurrent)) {
+        Serial.println("[CURRENT] ERROR: Invalid filtered current, resetting to 0A");
+        s_filteredCurrent = 0.0f;
+    }
+    
+    // SAFETY: Clamp current to reasonable values
+    if (rawCurrent > 1000.0f) {
+        Serial.println("[CURRENT] WARNING: Excessive current reading, clamping to 1000A");
+        rawCurrent = 1000.0f;
+    } else if (rawCurrent < -1000.0f) {
+        Serial.println("[CURRENT] WARNING: Excessive discharge reading, clamping to -1000A");
+        rawCurrent = -1000.0f;
+    }
     
     g_bmsState.currentAmps = rawCurrent;
     g_bmsState.avgCurrentAmps = s_filteredCurrent;

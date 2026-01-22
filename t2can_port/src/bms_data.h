@@ -286,8 +286,14 @@ struct BmsState {
 
     /**
      * Get pack voltage (sum of all series cells divided by parallel strings)
+     * SAFETY: Prevents division by zero
      */
     float getPackVoltage(int parallelStrings = 1) const {
+        // SAFETY: Prevent division by zero
+        if (parallelStrings <= 0) {
+            Serial.println("[BMS] ERROR: Invalid parallelStrings in getPackVoltage");
+            return packVoltage; // Return undivided voltage
+        }
         return packVoltage / parallelStrings;
     }
 };
