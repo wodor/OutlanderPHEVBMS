@@ -15,7 +15,7 @@ The purpose is to read cell voltages and temperatures from Mitsubishi Outlander 
 - **Web Dashboard**: Real-time monitoring via WiFi
 - **Serial Console**: Interactive command interface
 
-### V2 Features (Recently Added)
+### V2 Features
 
 - **SOC (State of Charge) Calculation**: 
   - Coulomb-counting (amp-hour integration) for accurate SOC tracking
@@ -96,8 +96,9 @@ Connect via USB serial (115200 baud) and use these commands:
 
 - `b` - Toggle cell balancing on/off
 - `d` - Toggle debug mode (shows raw CAN frames)
-- `r` - Reset SOC to 100%
+- `R` - Reset SOC to 100%
 - `s` - Show detailed statistics (all modules, cells, temps)
+- `r` - Show what web server is showing
 - `h` - Show help
 
 ## Configuration
@@ -115,7 +116,7 @@ Settings are defined in `src/bms_data.h` in the `BmsSettings` structure. Key par
 - `underTemp` - Cold limit (default: -10°C)
 
 ### Battery Configuration
-- `seriesCells` - Cells in series (default: 12 for Outlander)
+- `seriesCells` - Cells in series (default: 12) - it works ok despite it is not true value
 - `parallelStrings` - Parallel strings (default: 1)
 - `capacityAh` - Battery capacity (default: 100Ah)
 
