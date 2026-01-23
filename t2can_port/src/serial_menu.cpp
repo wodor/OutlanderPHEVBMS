@@ -12,6 +12,7 @@
 
 // Forward declarations
 static void printDetailedStats();
+static void printFullReport();
 
 // =============================================================================
 // COMMAND HANDLERS
@@ -36,7 +37,11 @@ static void handleCommand(char cmd) {
             Serial.println(g_bmsState.debugMode ? "ON (showing raw CAN frames)" : "OFF");
             break;
 
-        case 'r':  // Reset SOC to 100%
+        case 'r':  // Show full report
+            printFullReport();
+            break;
+
+        case 'R':  // Reset SOC to 100%
             Serial.println();
             Serial.println("[CMD] Resetting SOC to 100%");
             socReset(100);
@@ -58,7 +63,8 @@ static void handleCommand(char cmd) {
             Serial.println("  b - Toggle cell balancing");
             Serial.println("  c - Show CAN bus diagnostics");
             Serial.println("  d - Toggle debug mode (show raw CAN)");
-            Serial.println("  r - Reset SOC to 100%");
+            Serial.println("  r - Show full report");
+            Serial.println("  R - Reset SOC to 100%");
             Serial.println("  s - Show detailed statistics");
             Serial.println("  h - Show this help");
             break;
@@ -94,40 +100,91 @@ void serialProcessInput() {
 }
 
 void serialPrintPackInfo() {
-    // Update pack statistics before display
+    Serial.print(".");
+}
+
+static void printFullReport() {
     g_bmsState.updatePackStatistics();
 
     Serial.println();
-    Serial.println("================== OUTLANDER BMS STATUS ==================");
+    Serial.println();
+    Serial.println("╔═══════════════════════════════════════════════════════════════════════════╗");
+    Serial.println("║                        OUTLANDER BMS MONITOR                              ║");
+    Serial.println("╠═══════════════════════════════════════════════════════════════════════════╣");
 
-    // Check if we have any data
     if (!g_bmsState.hasAnyData()) {
-        Serial.println("  No CMU data received yet. Check CAN bus connection.");
-        Serial.println("  - Verify wiring to CAN-A port");
-        Serial.println("  - Ensure BMS is powered and transmitting");
+        Serial.println("║  No CMU data received. Check CAN bus connection.                          ║");
+        Serial.println("╚═══════════════════════════════════════════════════════════════════════════╝");
         return;
     }
 
-    // Pack summary with V2 features
-    Serial.println("-----------------------------------------------------------");
-    Serial.printf("Pack Voltage:    %.2fV\n", g_bmsState.packVoltage);
-    Serial.printf("Lowest cell:     %ld mV (%.3fV)\n", g_bmsState.lowestCellMv, g_bmsState.lowestCellMv / 1000.0f);
-    Serial.printf("Highest cell:    %ld mV (%.3fV)\n", g_bmsState.highestCellMv, g_bmsState.highestCellMv / 1000.0f);
-    Serial.printf("Cell delta:      %ld mV (%.3fV)\n", 
+    unsigned long msSinceCan = (g_bmsState.lastCanMessageTime > 0)
+        ? (millis() - g_bmsState.lastCanMessageTime)
+        : 999999;
+    const char* canStatus = (msSinceCan < 2000) ? "OK" : (msSinceCan < 10000) ? "SLOW" : "NO DATA";
+
+    int presentCount = 0;
+    int balancingCount = 0;
+    for (int m = 0; m < BMS_MODULE_COUNT; m++) {
+        if (g_bmsState.modules[m].present) {
+            presentCount++;
+            for (int c = 0; c < CELLS_PER_MODULE; c++) {
+                if ((g_bmsState.modules[m].balanceStatus >> c) & 1) {
+                    balancingCount++;
+                }
+            }
+        }
+    }
+
+    Serial.println("║  SUMMARY                                                                  ║");
+    Serial.println("╟───────────────────────────────────────────────────────────────────────────╢");
+    Serial.printf("║  CAN: %-7s SOC: %3d%%  Pack: %6.2fV  Current: %+7.2fA (avg %+7.2fA)  ║\n",
+                  canStatus, g_bmsState.soc, g_bmsState.packVoltage, 
+                  g_bmsState.currentAmps, g_bmsState.avgCurrentAmps);
+    Serial.printf("║  Cells: %4ld-%4ldmV (d%4ldmV)  Avg: %.3fV  Temp: %5.1f/%5.1f/%5.1fC    ║\n",
+                  g_bmsState.lowestCellMv, g_bmsState.highestCellMv,
                   g_bmsState.highestCellMv - g_bmsState.lowestCellMv,
-                  (g_bmsState.highestCellMv - g_bmsState.lowestCellMv) / 1000.0f);
-    Serial.printf("Avg cell:        %.3fV\n", g_bmsState.avgCellVoltage);
-    Serial.println("-----------------------------------------------------------");
-    Serial.printf("Temperature:     %.1fC (low) / %.1fC (avg) / %.1fC (high)\n",
+                  g_bmsState.avgCellVoltage,
                   g_bmsState.lowestTemp, g_bmsState.avgTemp, g_bmsState.highestTemp);
-    Serial.println("-----------------------------------------------------------");
-    Serial.printf("SOC:             %d%%\n", g_bmsState.soc);
-    Serial.printf("Current:         %.2fA (avg: %.2fA)\n", g_bmsState.currentAmps, g_bmsState.avgCurrentAmps);
-    Serial.printf("Amp-hours:       %.2fAh\n", g_bmsState.ampSeconds * 0.27777777777778f / 1000.0f);
-    Serial.println("-----------------------------------------------------------");
-    Serial.printf("Balancing:       %s\n", g_bmsState.balancingEnabled ? "ENABLED" : "disabled");
-    Serial.printf("Protection:      %s\n", protectionGetStatus());
-    Serial.println("===========================================================");
+    Serial.printf("║  Modules: %d/8  Balancing: %-3s (%d cells)  Protection: %-16s    ║\n",
+                  presentCount,
+                  g_bmsState.balancingEnabled ? "ON" : "OFF",
+                  balancingCount,
+                  protectionGetStatus());
+    Serial.println("╠═══════════════════════════════════════════════════════════════════════════╣");
+    Serial.println("║  MODULES                                                                  ║");
+
+    for (int m = 0; m < BMS_MODULE_COUNT; m++) {
+        const CmuData& cmu = g_bmsState.modules[m];
+        if (!cmu.present) continue;
+
+        long modMin = 9999, modMax = 0;
+        for (int c = 0; c < CELLS_PER_MODULE; c++) {
+            if (cmu.voltages[c] > 0) {
+                if (cmu.voltages[c] < modMin) modMin = cmu.voltages[c];
+                if (cmu.voltages[c] > modMax) modMax = cmu.voltages[c];
+            }
+        }
+
+        Serial.println("╟───────────────────────────────────────────────────────────────────────────╢");
+        Serial.printf("║  CMU %2d  d%4ldmV  Temps: %5.1fC | %5.1fC                                 ║\n",
+                      m + 1, modMax - modMin,
+                      cmu.temperatures[0] / 1000.0f, cmu.temperatures[1] / 1000.0f);
+        Serial.print("║  ");
+        for (int c = 0; c < CELLS_PER_MODULE; c++) {
+            bool isBalancing = (cmu.balanceStatus >> c) & 1;
+            bool isLowest = (cmu.voltages[c] == g_bmsState.lowestCellMv);
+            char marker = ' ';
+            if (isLowest && isBalancing) marker = '!';
+            else if (isLowest) marker = '*';
+            else if (isBalancing) marker = '~';
+            Serial.printf("%4ld%c ", cmu.voltages[c], marker);
+        }
+        Serial.println("mV                        ║");
+    }
+
+    Serial.println("╚═══════════════════════════════════════════════════════════════════════════╝");
+    Serial.println();
 }
 
 static void printDetailedStats() {

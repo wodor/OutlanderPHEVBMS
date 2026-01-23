@@ -95,8 +95,8 @@ constexpr uint8_t MSG_TYPE_VOLTS_2  = 0x3;  // Cells 5-8 voltages
  * This is similar to event loops in Node.js or ReactPHP.
  */
 
-constexpr unsigned long INTERVAL_CAN_SEND_MS  = 400;   // Send balance cmd every 400ms
-constexpr unsigned long INTERVAL_DISPLAY_MS   = 500;   // Update display every 500ms
+constexpr unsigned long INTERVAL_CAN_SEND_MS  = 200;   // Send balance cmd every X ms
+constexpr unsigned long INTERVAL_DISPLAY_MS   = 500;   // Update display every X ms
 
 // =============================================================================
 // DEFAULT VALUES
