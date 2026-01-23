@@ -50,7 +50,7 @@ constexpr uint8_t PIN_CAN_RX = 6;
  * Think of constexpr as 'const' in PHP but evaluated at compile time.
  */
 
-constexpr int BMS_MODULE_COUNT = 8;       // Outlander has 8 CMU (Cell Monitor Units)
+constexpr int BMS_MODULE_COUNT = 10;      // Outlander has 10 CMU (Cell Monitor Units)
 constexpr int CELLS_PER_MODULE = 8;       // Each CMU monitors 8 cells
 constexpr int TEMPS_PER_MODULE = 3;       // Each CMU has 3 temperature sensors
 
@@ -71,7 +71,7 @@ constexpr int TEMPS_PER_MODULE = 3;       // Each CMU has 3 temperature sensors
  */
 
 constexpr uint32_t CAN_BAUD_RATE = 500000;  // 500 kbit/s - standard for automotive
-constexpr uint8_t  CAN_CRYSTAL_MHZ = 8;     // T-2Can's MCP2515 has 8MHz crystal
+constexpr uint8_t  CAN_CRYSTAL_MHZ = 16;    // T-2Can's MCP2515 has 16MHz crystal
 
 // CAN message IDs used by Outlander BMS
 // Format: 0x0[CMU_number][message_type] where CMU 1-8 = 0x10-0x80

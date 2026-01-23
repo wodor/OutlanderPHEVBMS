@@ -11,6 +11,7 @@
 extern BmsState g_bmsState;
 extern BmsSettings g_bmsSettings;
 
+#ifndef UNIT_TEST
 void setUp(void) {
     // Reset state before each test
     g_bmsState = BmsState();
@@ -20,6 +21,7 @@ void setUp(void) {
 void tearDown(void) {
     // Clean up after each test
 }
+#endif
 
 /**
  * Test voltage-based SOC calculation
@@ -147,19 +149,21 @@ void test_soc_parallel_strings() {
     TEST_ASSERT_FLOAT_WITHIN(1.0f, expectedAmpSec, g_bmsState.ampSeconds);
 }
 
+#ifndef UNIT_TEST
 void setup() {
     delay(2000); // Wait for serial
     UNITY_BEGIN();
-    
+
     RUN_TEST(test_soc_voltage_calculation);
     RUN_TEST(test_soc_reset);
     RUN_TEST(test_soc_coulomb_counting);
     RUN_TEST(test_soc_clamping);
     RUN_TEST(test_soc_parallel_strings);
-    
+
     UNITY_END();
 }
 
 void loop() {
     // Tests run once in setup()
 }
+#endif

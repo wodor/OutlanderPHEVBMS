@@ -51,3 +51,39 @@ void canPoll();
  * Call this periodically (every ~400ms) from loop().
  */
 void canSendBalanceCommand();
+
+// =============================================================================
+// DIAGNOSTIC FUNCTIONS
+// =============================================================================
+
+/**
+ * CAN bus statistics for debugging
+ */
+struct CanStats {
+    uint32_t messagesReceived;    // Total valid CAN frames received
+    uint32_t messagesDecoded;     // Messages matching CMU format
+    uint32_t readAttempts;        // Total readMessage() calls that returned OK
+    uint32_t txAttempts;          // Total sendMessage() calls
+    uint32_t txSuccess;           // Successful transmissions
+    uint8_t  lastErrorFlags;      // Last MCP2515 EFLG register value
+    uint8_t  lastInterrupts;      // Last CANINTF register value
+    uint8_t  lastStatus;          // Last STATUS register value
+    uint32_t lastMessageTime;     // millis() of last received message
+};
+
+/**
+ * Get current CAN statistics
+ */
+CanStats canGetStats();
+
+/**
+ * Print CAN diagnostic information to serial
+ * Shows MCP2515 status, error flags, and message counts
+ */
+void canPrintDiagnostics();
+
+/**
+ * Verify MCP2515 SPI communication is working
+ * @return true if MCP2515 responds correctly
+ */
+bool canVerifySpiComm();

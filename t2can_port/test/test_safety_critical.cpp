@@ -21,6 +21,7 @@
 extern BmsState g_bmsState;
 extern BmsSettings g_bmsSettings;
 
+#ifndef UNIT_TEST
 void setUp(void) {
     g_bmsState = BmsState();
     g_bmsSettings = BmsSettings();
@@ -29,6 +30,7 @@ void setUp(void) {
 void tearDown(void) {
     protectionClearFaults();
 }
+#endif
 
 // =============================================================================
 // CRITICAL: INTEGER OVERFLOW/UNDERFLOW TESTS
@@ -430,45 +432,47 @@ void test_float_operations_accuracy() {
     TEST_ASSERT_FALSE(isinf(result));
 }
 
+#ifndef UNIT_TEST
 void setup() {
     delay(2000);
     UNITY_BEGIN();
-    
+
     // Critical overflow/underflow tests
     RUN_TEST(test_soc_extreme_current_overflow);
     RUN_TEST(test_soc_extreme_discharge_underflow);
     RUN_TEST(test_voltage_extreme_values);
     RUN_TEST(test_temperature_extreme_values);
-    
+
     // Critical millis() rollover tests
     RUN_TEST(test_soc_millis_rollover);
     RUN_TEST(test_protection_millis_rollover);
-    
+
     // Critical division by zero tests
     RUN_TEST(test_soc_zero_capacity);
     RUN_TEST(test_current_sense_zero_conversion);
     RUN_TEST(test_pack_voltage_zero_strings);
-    
+
     // Critical float to int conversion tests
     RUN_TEST(test_soc_float_to_int_overflow);
-    
+
     // Critical array bounds tests
     RUN_TEST(test_module_array_bounds);
     RUN_TEST(test_cell_array_bounds);
     RUN_TEST(test_temperature_array_bounds);
-    
+
     // Critical concurrent access tests
     RUN_TEST(test_concurrent_soc_and_statistics);
     RUN_TEST(test_concurrent_protection_and_voltage_update);
-    
+
     // Critical ESP32-S3 specific tests
     RUN_TEST(test_memory_usage);
     RUN_TEST(test_no_deep_recursion);
     RUN_TEST(test_float_operations_accuracy);
-    
+
     UNITY_END();
 }
 
 void loop() {
     // Tests run once in setup()
 }
+#endif

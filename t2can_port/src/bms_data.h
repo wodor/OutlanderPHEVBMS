@@ -235,9 +235,11 @@ struct BmsState {
             if (!modules[m].present) continue;
 
             // Process cell voltages
+            // Valid Li-ion cell voltage range: 1500mV - 4500mV
+            // Values like 0xFFFD (65533) or 0 indicate "no data" from CMU
             for (int c = 0; c < CELLS_PER_MODULE; c++) {
                 long v = modules[m].voltages[c];
-                if (v > 0) {  // Valid voltage
+                if (v >= 1500 && v <= 4500) {  // Valid voltage range
                     if (v < lowestCellMv) lowestCellMv = v;
                     if (v > highestCellMv) highestCellMv = v;
                     packVoltage += v / 1000.0f;  // Convert mV to V

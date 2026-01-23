@@ -10,6 +10,7 @@
 extern BmsState g_bmsState;
 extern BmsSettings g_bmsSettings;
 
+#ifndef UNIT_TEST
 void setUp(void) {
     g_bmsState = BmsState();
     g_bmsSettings = BmsSettings();
@@ -18,6 +19,7 @@ void setUp(void) {
 void tearDown(void) {
     // Clean up
 }
+#endif
 
 /**
  * Test current sense initialization
@@ -111,20 +113,22 @@ void test_current_sensor_settings() {
     TEST_ASSERT_EQUAL_UINT16(5, settings.currentDeadband);
 }
 
+#ifndef UNIT_TEST
 void setup() {
     delay(2000);
     UNITY_BEGIN();
-    
+
     RUN_TEST(test_current_sense_init);
     RUN_TEST(test_current_sense_no_sensor);
     RUN_TEST(test_current_sense_filtering);
     RUN_TEST(test_current_sense_get_amps);
     RUN_TEST(test_current_sensor_config);
     RUN_TEST(test_current_sensor_settings);
-    
+
     UNITY_END();
 }
 
 void loop() {
     // Tests run once in setup()
 }
+#endif

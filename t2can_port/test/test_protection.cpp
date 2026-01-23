@@ -10,6 +10,7 @@
 extern BmsState g_bmsState;
 extern BmsSettings g_bmsSettings;
 
+#ifndef UNIT_TEST
 void setUp(void) {
     g_bmsState = BmsState();
     g_bmsSettings = BmsSettings();
@@ -19,6 +20,7 @@ void setUp(void) {
 void tearDown(void) {
     protectionClearFaults();
 }
+#endif
 
 /**
  * Test overvoltage detection
@@ -217,10 +219,11 @@ void test_fault_clearing() {
     TEST_ASSERT_TRUE(result);
 }
 
+#ifndef UNIT_TEST
 void setup() {
     delay(2000);
     UNITY_BEGIN();
-    
+
     RUN_TEST(test_overvoltage_detection);
     RUN_TEST(test_undervoltage_detection);
     RUN_TEST(test_overtemperature_detection);
@@ -230,10 +233,11 @@ void setup() {
     RUN_TEST(test_can_discharge);
     RUN_TEST(test_protection_hysteresis);
     RUN_TEST(test_fault_clearing);
-    
+
     UNITY_END();
 }
 
 void loop() {
     // Tests run once in setup()
 }
+#endif

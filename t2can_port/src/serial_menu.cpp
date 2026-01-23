@@ -8,6 +8,10 @@
 #include "bms_data.h"
 #include "soc_calc.h"
 #include "protection.h"
+#include "can_handler.h"
+
+// Forward declarations
+static void printDetailedStats();
 
 // =============================================================================
 // COMMAND HANDLERS
@@ -43,11 +47,16 @@ static void handleCommand(char cmd) {
             printDetailedStats();
             break;
 
+        case 'c':  // CAN diagnostics
+            canPrintDiagnostics();
+            break;
+
         case 'h':  // Help
         case '?':
             Serial.println();
             Serial.println("=== Commands ===");
             Serial.println("  b - Toggle cell balancing");
+            Serial.println("  c - Show CAN bus diagnostics");
             Serial.println("  d - Toggle debug mode (show raw CAN)");
             Serial.println("  r - Reset SOC to 100%");
             Serial.println("  s - Show detailed statistics");

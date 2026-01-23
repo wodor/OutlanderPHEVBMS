@@ -136,7 +136,7 @@ void setup() {
     protectionInit();
 
     Serial.println();
-    Serial.println("Commands: 'b' = toggle balancing, 'd' = debug, 'h' = help");
+    Serial.println("Commands: 'b' = balancing, 'c' = CAN diag, 'd' = debug, 'h' = help");
     Serial.println("Waiting for BMS data...");
     Serial.println();
 }

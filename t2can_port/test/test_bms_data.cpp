@@ -9,6 +9,7 @@
 extern BmsState g_bmsState;
 extern BmsSettings g_bmsSettings;
 
+#ifndef UNIT_TEST
 void setUp(void) {
     g_bmsState = BmsState();
     g_bmsSettings = BmsSettings();
@@ -16,6 +17,13 @@ void setUp(void) {
 
 void tearDown(void) {
     // Clean up
+}
+#endif
+
+// Test-specific setup helper
+static void bms_data_test_setup() {
+    g_bmsState = BmsState();
+    g_bmsSettings = BmsSettings();
 }
 
 /**
@@ -211,10 +219,11 @@ void test_cmu_data_init() {
     }
 }
 
+#ifndef UNIT_TEST
 void setup() {
     delay(2000);
     UNITY_BEGIN();
-    
+
     RUN_TEST(test_pack_statistics_voltages);
     RUN_TEST(test_pack_statistics_temperatures);
     RUN_TEST(test_pack_statistics_invalid_temps);
@@ -224,10 +233,11 @@ void setup() {
     RUN_TEST(test_get_pack_voltage_parallel_strings);
     RUN_TEST(test_settings_defaults);
     RUN_TEST(test_cmu_data_init);
-    
+
     UNITY_END();
 }
 
 void loop() {
     // Tests run once in setup()
 }
+#endif
