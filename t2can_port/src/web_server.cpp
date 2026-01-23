@@ -13,6 +13,7 @@
 #include "web_server.h"
 #include "config.h"
 #include "bms_data.h"
+#include "protection.h"
 #include <ESPAsyncWebServer.h>
 
 // Web server instance on port 80
@@ -76,14 +77,15 @@ static String buildFullBmsJson() {
 
     json += "],";
     json += "\"lowestCellMv\":" + String(g_bmsState.lowestCellMv) + ",";
-    json += "\"balancingEnabled\":" + String(g_bmsState.balancingEnabled ? "true" : "false");
+    json += "\"balancingEnabled\":" + String(g_bmsState.balancingEnabled ? "true" : "false") + ",";
+    json += "\"balanceTargetMv\":" + String(g_bmsState.balancingEnabled ? g_bmsState.lowestCellMv : 0);
     json += "}";
 
     return json;
 }
 
 /**
- * Build JSON summary.
+ * Build JSON summary with V2 features.
  */
 static String buildSummaryJson() {
     int presentCount = 0;
@@ -109,8 +111,19 @@ static String buildSummaryJson() {
     String json = "{";
     json += "\"modulesPresent\":" + String(presentCount) + ",";
     json += "\"lowestCellMv\":" + String(g_bmsState.lowestCellMv) + ",";
+    json += "\"highestCellMv\":" + String(g_bmsState.highestCellMv) + ",";
+    json += "\"avgCellVoltage\":" + String(g_bmsState.avgCellVoltage, 3) + ",";
+    json += "\"packVoltage\":" + String(g_bmsState.packVoltage, 2) + ",";
+    json += "\"lowestTemp\":" + String(g_bmsState.lowestTemp, 1) + ",";
+    json += "\"highestTemp\":" + String(g_bmsState.highestTemp, 1) + ",";
+    json += "\"avgTemp\":" + String(g_bmsState.avgTemp, 1) + ",";
+    json += "\"soc\":" + String(g_bmsState.soc) + ",";
+    json += "\"currentAmps\":" + String(g_bmsState.currentAmps, 2) + ",";
+    json += "\"avgCurrentAmps\":" + String(g_bmsState.avgCurrentAmps, 2) + ",";
     json += "\"balancingEnabled\":" + String(g_bmsState.balancingEnabled ? "true" : "false") + ",";
+    json += "\"balanceTargetMv\":" + String(g_bmsState.balancingEnabled ? g_bmsState.lowestCellMv : 0) + ",";
     json += "\"cellsBalancing\":" + String(balancingCount) + ",";
+    json += "\"protectionStatus\":\"" + String(protectionGetStatus()) + "\",";
     json += "\"msSinceCanMsg\":" + String(msSinceCan);
     json += "}";
 
@@ -180,6 +193,9 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
         .cell.low { background: #ef4444; }
         .cell.high { background: #3b82f6; }
         .cell-num { font-size: 0.7em; color: #666; display: block; }
+        .cell-delta { font-size: 0.7em; color: #888; display: block; }
+        .cell.balancing .cell-delta { color: #333; }
+        .module-delta { font-size: 0.8em; color: #f59e0b; margin-left: 10px; }
         .controls {
             text-align: center;
             margin-top: 20px;
@@ -209,8 +225,32 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             <div class="summary-label">CAN Bus</div>
         </div>
         <div class="summary-item">
+            <div class="summary-value" id="soc">--</div>
+            <div class="summary-label">SOC (%)</div>
+        </div>
+        <div class="summary-item">
+            <div class="summary-value" id="packVoltage">--</div>
+            <div class="summary-label">Pack Voltage (V)</div>
+        </div>
+        <div class="summary-item">
+            <div class="summary-value" id="current">--</div>
+            <div class="summary-label">Current (A)</div>
+        </div>
+        <div class="summary-item">
             <div class="summary-value" id="lowestCell">--</div>
             <div class="summary-label">Lowest Cell (mV)</div>
+        </div>
+        <div class="summary-item">
+            <div class="summary-value" id="highestCell">--</div>
+            <div class="summary-label">Highest Cell (mV)</div>
+        </div>
+        <div class="summary-item">
+            <div class="summary-value" id="avgTemp">--</div>
+            <div class="summary-label">Avg Temp (°C)</div>
+        </div>
+        <div class="summary-item">
+            <div class="summary-value" id="protection">--</div>
+            <div class="summary-label">Protection</div>
         </div>
         <div class="summary-item">
             <div class="summary-value" id="modulesOnline">--</div>
@@ -219,6 +259,10 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
         <div class="summary-item">
             <div class="summary-value" id="cellsBalancing">--</div>
             <div class="summary-label">Cells Balancing</div>
+        </div>
+        <div class="summary-item">
+            <div class="summary-value" id="balanceTarget">--</div>
+            <div class="summary-label">Balance Target (mV)</div>
         </div>
     </div>
 
@@ -252,8 +296,34 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             }
 
             document.getElementById('lowestCell').textContent = data.lowestCellMv;
+            document.getElementById('highestCell').textContent = summary.highestCellMv;
+            document.getElementById('packVoltage').textContent = summary.packVoltage;
+            document.getElementById('soc').textContent = summary.soc + '%';
+            document.getElementById('current').textContent = summary.avgCurrentAmps;
+            document.getElementById('avgTemp').textContent = summary.avgTemp;
+            
+            // Protection status with color
+            const protEl = document.getElementById('protection');
+            protEl.textContent = summary.protectionStatus;
+            if (summary.protectionStatus === 'OK') {
+                protEl.style.color = '#4ade80';
+            } else if (summary.protectionStatus.includes('WARNING')) {
+                protEl.style.color = '#f59e0b';
+            } else {
+                protEl.style.color = '#ef4444';
+            }
+            
             document.getElementById('balanceBtn').textContent = 'Balancing: ' + (balancingEnabled ? 'ON' : 'OFF');
             document.getElementById('balanceBtn').className = balancingEnabled ? '' : 'off';
+            
+            const targetEl = document.getElementById('balanceTarget');
+            if (balancingEnabled && summary.balanceTargetMv > 0) {
+                targetEl.textContent = summary.balanceTargetMv;
+                targetEl.style.color = '#4ade80';
+            } else {
+                targetEl.textContent = '--';
+                targetEl.style.color = '#666';
+            }
 
             let onlineCount = 0;
             let balancingCount = 0;
@@ -262,9 +332,14 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             for (const mod of data.modules) {
                 if (mod.present) onlineCount++;
 
+                const validVoltages = mod.voltages.filter(v => v > 0);
+                const modMin = validVoltages.length > 0 ? Math.min(...validVoltages) : 0;
+                const modMax = validVoltages.length > 0 ? Math.max(...validVoltages) : 0;
+                const modDelta = modMax - modMin;
+
                 html += `<div class="module ${mod.present ? '' : 'offline'}">`;
                 html += `<div class="module-header">`;
-                html += `<span class="module-title">CMU ${mod.module}</span>`;
+                html += `<span class="module-title">CMU ${mod.module}<span class="module-delta">Δ${modDelta}mV</span></span>`;
                 html += `<span class="temps">${mod.temperatures.map(t => t.toFixed(1) + '°C').join(' | ')}</span>`;
                 html += `</div>`;
                 html += `<div class="cells">`;
@@ -273,6 +348,7 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
                     const v = mod.voltages[i];
                     const isBalancing = mod.balancing[i];
                     if (isBalancing) balancingCount++;
+                    const cellDelta = v > 0 ? v - modMin : 0;
 
                     let cellClass = 'cell';
                     if (isBalancing) cellClass += ' balancing';
@@ -282,6 +358,7 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
                     html += `<div class="${cellClass}">`;
                     html += `<span class="cell-num">C${i + 1}</span>`;
                     html += `${v}`;
+                    html += `<span class="cell-delta">+${cellDelta}</span>`;
                     html += `</div>`;
                 }
 
@@ -370,6 +447,7 @@ static void handleApiBalancing(AsyncWebServerRequest* request) {
 
     request->send(200, "application/json", json);
 }
+
 
 static void handleNotFound(AsyncWebServerRequest* request) {
     request->send(404, "application/json", "{\"error\":\"Not found\"}");

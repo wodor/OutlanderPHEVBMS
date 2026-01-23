@@ -27,6 +27,9 @@ static MCP2515 s_canController(PIN_MCP2515_CS, 10000000, &SPI);
 static struct can_frame s_rxFrame;  // Received frame
 static struct can_frame s_txFrame;  // Frame to transmit
 
+// CAN statistics for diagnostics
+static CanStats s_canStats = {};
+
 // =============================================================================
 // PRIVATE HELPER FUNCTIONS
 // =============================================================================
@@ -50,15 +53,50 @@ static struct can_frame s_txFrame;  // Frame to transmit
 static void decodeCanFrame() {
     uint32_t canId = s_rxFrame.can_id;
 
-    // Extract message type (lower nibble) and CMU index (upper nibble shifted)
-    // Example: ID 0x052 -> type=2, cmuIndex=4 (CMU 5, zero-indexed)
-    uint8_t msgType  = canId & 0x00F;
-    int     cmuIndex = ((canId & 0x0F0) >> 4) - 1;
+    // Track all received messages
+    s_canStats.messagesReceived++;
+    s_canStats.lastMessageTime = millis();
 
-    // Validate CMU index
-    if (cmuIndex < 0 || cmuIndex >= BMS_MODULE_COUNT) {
-        return;  // Invalid CMU, ignore
+    // Outlander CMU CAN ID format: 0x6XY where X=CMU number (1-8), Y=message type (1-4)
+    // Example: 0x671 -> CMU 7, type 1 (status/temps)
+    //          0x672 -> CMU 7, type 2 (voltages 1-4)
+    //          0x673 -> CMU 7, type 3 (voltages 5-8)
+
+    // Check if this is a CMU message (0x601-0x684 range)
+    if ((canId & 0xF00) != 0x600) {
+        // Not a CMU message - log in debug mode
+        if (g_bmsState.debugMode) {
+            Serial.printf("[CAN] Other ID:0x%03X DLC:%d Data:", canId, s_rxFrame.can_dlc);
+            for (int i = 0; i < s_rxFrame.can_dlc; i++) {
+                Serial.printf(" %02X", s_rxFrame.data[i]);
+            }
+            Serial.println();
+        }
+        return;
     }
+
+    // Extract CMU index and message type from 0x6XY format
+    uint8_t msgType  = canId & 0x00F;
+    int     cmuIndex = ((canId & 0x0F0) >> 4) - 1;  // CMU 1-8 -> index 0-7
+
+    // Validate CMU index (1-8 valid, so index 0-7)
+    if (cmuIndex < 0 || cmuIndex >= BMS_MODULE_COUNT) {
+        if (g_bmsState.debugMode) {
+            Serial.printf("[CAN] Invalid CMU in ID:0x%03X\n", canId);
+        }
+        return;
+    }
+
+    // Validate message type (1-4 are valid)
+    if (msgType < 1 || msgType > 4) {
+        if (g_bmsState.debugMode) {
+            Serial.printf("[CAN] Invalid msg type in ID:0x%03X\n", canId);
+        }
+        return;
+    }
+
+    // This is a valid CMU message
+    s_canStats.messagesDecoded++;
 
     // Mark this CMU as present (we received data from it)
     g_bmsState.modules[cmuIndex].present = true;
@@ -149,8 +187,8 @@ bool canInit() {
     s_canController.reset();
 
     // Configure baud rate
-    // MCP_8MHZ refers to the crystal on the MCP2515 board (not the ESP32's clock)
-    if (s_canController.setBitrate(CAN_500KBPS, MCP_8MHZ) != MCP2515::ERROR_OK) {
+    // T-2Can has 16MHz crystal on MCP2515 (library default)
+    if (s_canController.setBitrate(CAN_500KBPS) != MCP2515::ERROR_OK) {
         Serial.println("[CAN] ERROR: Failed to set bitrate!");
         return false;
     }
@@ -165,7 +203,29 @@ bool canInit() {
     s_txFrame.data[3] = 4;  // Fixed protocol bytes
     s_txFrame.data[4] = 3;
 
+    // Verify SPI communication is working
+    bool spiOk = canVerifySpiComm();
+    if (!spiOk) {
+        Serial.println("[CAN] WARNING: SPI communication may not be working!");
+        Serial.println("[CAN] All reads returned 0xFF - check wiring");
+    }
+
+    // Print initial diagnostic info
     Serial.println("[CAN] MCP2515 initialized successfully");
+    Serial.printf("[CAN] Config: 500kbps, 16MHz crystal\n");
+    Serial.printf("[CAN] Pins: CS=%d, SCLK=%d, MOSI=%d, MISO=%d, RST=%d\n",
+                  PIN_MCP2515_CS, PIN_MCP2515_SCLK, PIN_MCP2515_MOSI,
+                  PIN_MCP2515_MISO, PIN_MCP2515_RST);
+
+    // Show initial register state
+    uint8_t status = s_canController.getStatus();
+    uint8_t errorFlags = s_canController.getErrorFlags();
+    Serial.printf("[CAN] Initial STATUS=0x%02X EFLG=0x%02X\n", status, errorFlags);
+
+    if (errorFlags != 0) {
+        Serial.println("[CAN] WARNING: Error flags already set at init!");
+    }
+
     return true;
 }
 
@@ -178,7 +238,14 @@ void canPoll() {
      *
      * This is like checking a queue: "anything there? no? ok, move on"
      */
+
+    // Update diagnostic stats
+    s_canStats.lastErrorFlags = s_canController.getErrorFlags();
+    s_canStats.lastInterrupts = s_canController.getInterrupts();
+    s_canStats.lastStatus = s_canController.getStatus();
+
     while (s_canController.readMessage(&s_rxFrame) == MCP2515::ERROR_OK) {
+        s_canStats.readAttempts++;
         decodeCanFrame();
     }
 }
@@ -196,5 +263,96 @@ void canSendBalanceCommand() {
         s_txFrame.data[2] = 0;  // Balancing disabled
     }
 
-    s_canController.sendMessage(&s_txFrame);
+    s_canStats.txAttempts++;
+    if (s_canController.sendMessage(&s_txFrame) == MCP2515::ERROR_OK) {
+        s_canStats.txSuccess++;
+    }
+}
+
+// =============================================================================
+// DIAGNOSTIC FUNCTIONS
+// =============================================================================
+
+CanStats canGetStats() {
+    return s_canStats;
+}
+
+bool canVerifySpiComm() {
+    // Try to read the CANSTAT register - should return a valid mode value
+    // After reset, CANSTAT should be 0x80 (config mode) or 0x00 (normal mode)
+    uint8_t status = s_canController.getStatus();
+    uint8_t errorFlags = s_canController.getErrorFlags();
+
+    // If SPI is not working, we typically get 0xFF (all ones) back
+    // A working MCP2515 will return reasonable values
+    bool spiOk = (status != 0xFF) || (errorFlags != 0xFF);
+
+    return spiOk;
+}
+
+void canPrintDiagnostics() {
+    Serial.println();
+    Serial.println("=== CAN BUS DIAGNOSTICS ===");
+
+    // Verify SPI communication
+    bool spiOk = canVerifySpiComm();
+    Serial.printf("SPI Communication: %s\n", spiOk ? "OK" : "FAILED (check wiring)");
+
+    // MCP2515 status registers
+    uint8_t status = s_canController.getStatus();
+    uint8_t errorFlags = s_canController.getErrorFlags();
+    uint8_t interrupts = s_canController.getInterrupts();
+
+    Serial.println();
+    Serial.println("MCP2515 Registers:");
+    Serial.printf("  STATUS:   0x%02X\n", status);
+    Serial.printf("  EFLG:     0x%02X", errorFlags);
+
+    // Decode error flags
+    if (errorFlags == 0) {
+        Serial.println(" (no errors)");
+    } else {
+        Serial.println();
+        if (errorFlags & 0x80) Serial.println("    - RX1 Overflow");
+        if (errorFlags & 0x40) Serial.println("    - RX0 Overflow");
+        if (errorFlags & 0x20) Serial.println("    - TX Bus-Off");
+        if (errorFlags & 0x10) Serial.println("    - TX Error-Passive");
+        if (errorFlags & 0x08) Serial.println("    - RX Error-Passive");
+        if (errorFlags & 0x04) Serial.println("    - TX Warning");
+        if (errorFlags & 0x02) Serial.println("    - RX Warning");
+        if (errorFlags & 0x01) Serial.println("    - Error Warning");
+    }
+
+    Serial.printf("  CANINTF:  0x%02X", interrupts);
+    if (interrupts & 0x01) Serial.print(" RX0");
+    if (interrupts & 0x02) Serial.print(" RX1");
+    if (interrupts & 0x04) Serial.print(" TX0");
+    if (interrupts & 0x08) Serial.print(" TX1");
+    if (interrupts & 0x10) Serial.print(" TX2");
+    if (interrupts & 0x20) Serial.print(" ERR");
+    if (interrupts & 0x40) Serial.print(" WAK");
+    if (interrupts & 0x80) Serial.print(" MERR");
+    Serial.println();
+
+    // TX/RX error counters
+    Serial.printf("  TEC:      %d (TX error count)\n", s_canController.errorCountTX());
+    Serial.printf("  REC:      %d (RX error count)\n", s_canController.errorCountRX());
+
+    // Message statistics
+    Serial.println();
+    Serial.println("Message Statistics:");
+    Serial.printf("  Read attempts:      %u\n", s_canStats.readAttempts);
+    Serial.printf("  Messages received:  %u\n", s_canStats.messagesReceived);
+    Serial.printf("  CMU msgs decoded:   %u\n", s_canStats.messagesDecoded);
+    Serial.printf("  TX attempts:        %u\n", s_canStats.txAttempts);
+    Serial.printf("  TX success:         %u\n", s_canStats.txSuccess);
+
+    if (s_canStats.lastMessageTime > 0) {
+        Serial.printf("  Last msg:           %u ms ago\n", (uint32_t)(millis() - s_canStats.lastMessageTime));
+    } else {
+        Serial.println("  Last msg:           (none received)");
+    }
+
+    Serial.println("===========================");
+    Serial.println();
 }
