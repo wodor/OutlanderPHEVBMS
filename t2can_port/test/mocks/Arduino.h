@@ -17,13 +17,14 @@ typedef uint8_t byte;
 typedef bool boolean;
 
 // Time functions
+extern unsigned long g_mockMillis;
+
 inline unsigned long millis() {
-    static unsigned long ms = 0;
-    return ms++;
+    return g_mockMillis;
 }
 
 inline void delay(unsigned long ms) {
-    (void)ms;
+    g_mockMillis += ms;
 }
 
 // Mock Serial class

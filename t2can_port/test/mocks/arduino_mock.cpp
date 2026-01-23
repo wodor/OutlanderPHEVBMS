@@ -5,3 +5,4 @@
 #include "Arduino.h"
 
 MockSerial Serial;
+unsigned long g_mockMillis = 0;

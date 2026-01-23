@@ -47,14 +47,21 @@ void test_overvoltage_detection() {
  * Test undervoltage detection
  */
 void test_undervoltage_detection() {
+    extern unsigned long g_mockMillis;
+    
     g_bmsSettings.underVoltage = 3.0f;
     g_bmsState.modules[0].present = true;
     g_bmsState.modules[0].voltages[0] = 2900; // 2.9V - under limit
     
     g_bmsState.updatePackStatistics();
     
+    // Verify that statistics were updated correctly
+    TEST_ASSERT_EQUAL_INT32(2900, g_bmsState.lowestCellMv);
+    TEST_ASSERT_TRUE(g_bmsState.hasAnyData());
+    
     // Note: Undervoltage has debounce, so might need multiple checks
     // For testing, we check that it's detected
+    g_mockMillis = 1; // Start at 1 so debounce timer doesn't stay at 0
     bool result = protectionCheck();
     
     // After debounce period, should detect fault

@@ -68,10 +68,13 @@ void test_no_deep_recursion();
 void test_float_operations_accuracy();
 
 // Unity setUp/tearDown - called before/after each test
+extern unsigned long g_mockMillis;
+
 void setUp(void) {
     g_bmsState = BmsState();
     g_bmsSettings = BmsSettings();
     protectionInit();
+    g_mockMillis = 0;
 }
 
 void tearDown(void) {

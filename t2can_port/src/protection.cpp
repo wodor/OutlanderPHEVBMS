@@ -131,6 +131,11 @@ bool protectionCheck() {
         s_cellImbalanceFault = false;
     }
     
+    // Return false if any fault is active (even if latched)
+    if (s_overVoltFault || s_underVoltFault || s_overTempFault || s_underTempFault) {
+        return false;
+    }
+    
     return allOk;
 }
 
