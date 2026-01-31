@@ -50,8 +50,10 @@ static void processFrame(uint32_t canId, uint8_t dlc, uint8_t* data, int busInde
     s_canStats.messagesReceived++;
     s_canStats.lastMessageTime = millis();
 
-    // Check if this is a CMU message (0x601-0x684 range)
-    if ((canId & 0xF00) != 0x600) {
+    // Check if this is a CMU message (0x0xx or 0x6xx range depending on pack)
+    // Some packs use 0x011-0x083, others 0x611-0x683 style IDs.
+    uint16_t idBase = (uint16_t)(canId & 0xF00);
+    if (idBase != 0x000 && idBase != 0x600) {
         if (g_bmsState.debugMode) {
             Serial.printf("[CAN-%c] Other ID:0x%03X DLC:%d Data:",
                           (busIndex == 0 ? 'A' : 'B'), canId, dlc);

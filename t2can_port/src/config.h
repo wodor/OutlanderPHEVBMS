@@ -34,8 +34,9 @@ constexpr uint8_t PIN_MCP2515_MISO = 13;  // Master In Slave Out - data FROM the
 constexpr uint8_t PIN_MCP2515_RST  = 9;   // Reset pin - low pulse reboots the chip
 
 // Built-in ESP32 TWAI (Bus B)
-constexpr uint8_t PIN_CAN_TX = 17;
-constexpr uint8_t PIN_CAN_RX = 18;
+// T-2Can pin_config.h: CAN_TX=7, CAN_RX=6
+constexpr uint8_t PIN_CAN_TX = 7;
+constexpr uint8_t PIN_CAN_RX = 6;
 
 // =============================================================================
 // BMS CONFIGURATION
@@ -71,7 +72,7 @@ constexpr int TEMPS_PER_MODULE = 3;       // Each CMU has 3 temperature sensors
  */
 
 constexpr uint32_t CAN_BAUD_RATE = 500000;  // 500 kbit/s - standard for automotive
-constexpr uint8_t  CAN_CRYSTAL_MHZ = 16;    // T-2Can's MCP2515 has 16MHz crystal
+constexpr uint8_t  CAN_CRYSTAL_MHZ = 8;     // T-2Can's MCP2515 crystal (see AGENTS.md)
 
 // CAN message IDs used by Outlander BMS
 // Format: 0x0[CMU_number][message_type] where CMU 1-8 = 0x10-0x80
