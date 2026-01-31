@@ -226,6 +226,24 @@ void test_fault_clearing() {
     TEST_ASSERT_TRUE(result);
 }
 
+/**
+ * Test communication fault triggers when CMUs are expected but silent
+ */
+void test_comm_fault_no_data() {
+    extern unsigned long g_mockMillis;
+    
+    // Expect one CMU on each bus, but mark none present
+    g_bmsSettings.expectedCmusA = 0x001;
+    g_bmsSettings.expectedCmusB = 0x001;
+    
+    // Advance time beyond startup grace
+    g_mockMillis = 11000;
+    
+    bool result = protectionCheck();
+    TEST_ASSERT_FALSE(result);
+    TEST_ASSERT_EQUAL_STRING("COMMUNICATION FAULT", protectionGetStatus());
+}
+
 #ifndef UNIT_TEST
 void setup() {
     delay(2000);
@@ -240,6 +258,7 @@ void setup() {
     RUN_TEST(test_can_discharge);
     RUN_TEST(test_protection_hysteresis);
     RUN_TEST(test_fault_clearing);
+    RUN_TEST(test_comm_fault_no_data);
 
     UNITY_END();
 }

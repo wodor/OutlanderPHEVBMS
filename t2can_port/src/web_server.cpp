@@ -94,6 +94,7 @@ static String buildFullBmsJson() {
 static String buildSummaryJson() {
     int presentCount = 0;
     int balancingCount = 0;
+    int expectedCount = 0;
 
     for (int m = 0; m < BMS_MODULE_COUNT; m++) {
         if (g_bmsState.modules[m].present) {
@@ -105,6 +106,12 @@ static String buildSummaryJson() {
                 }
             }
         }
+    }
+
+    // Count expected CMUs (10 per bus)
+    for (int i = 0; i < 10; i++) {
+        if (g_bmsSettings.expectedCmusA & (1 << i)) expectedCount++;
+        if (g_bmsSettings.expectedCmusB & (1 << i)) expectedCount++;
     }
 
     // Calculate seconds since last CAN message
@@ -129,6 +136,8 @@ static String buildSummaryJson() {
     json += "\"cellsBalancing\":" + String(balancingCount) + ",";
     json += "\"protectionStatus\":\"" + String(protectionGetStatus()) + "\",";
     json += "\"msSinceCanMsg\":" + String(msSinceCan) + ",";
+    json += "\"hasData\":" + String(presentCount > 0 ? "true" : "false") + ",";
+    json += "\"expectedTotal\":" + String(expectedCount) + ",";
     json += "\"expectedCmusA\":" + String(g_bmsSettings.expectedCmusA) + ",";
     json += "\"expectedCmusB\":" + String(g_bmsSettings.expectedCmusB);
     json += "}";
@@ -307,12 +316,14 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
                 canEl.style.color = '#ef4444';
             }
 
-            document.getElementById('lowestCell').textContent = data.lowestCellMv;
-            document.getElementById('highestCell').textContent = summary.highestCellMv;
-            document.getElementById('packVoltage').textContent = summary.packVoltage;
-            document.getElementById('soc').textContent = summary.soc + '%';
-            document.getElementById('current').textContent = summary.avgCurrentAmps;
-            document.getElementById('avgTemp').textContent = summary.avgTemp;
+            const hasData = summary.hasData;
+            const na = 'N/A';
+            document.getElementById('lowestCell').textContent = hasData ? data.lowestCellMv : na;
+            document.getElementById('highestCell').textContent = hasData ? summary.highestCellMv : na;
+            document.getElementById('packVoltage').textContent = hasData ? summary.packVoltage : na;
+            document.getElementById('soc').textContent = hasData ? (summary.soc + '%') : na;
+            document.getElementById('current').textContent = hasData ? summary.avgCurrentAmps : na;
+            document.getElementById('avgTemp').textContent = hasData ? summary.avgTemp : na;
             
             // Protection status with color
             const protEl = document.getElementById('protection');
@@ -329,7 +340,7 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             document.getElementById('balanceBtn').className = balancingEnabled ? '' : 'off';
             
             const targetEl = document.getElementById('balanceTarget');
-            if (balancingEnabled && summary.balanceTargetMv > 0) {
+            if (balancingEnabled && summary.balanceTargetMv > 0 && hasData) {
                 targetEl.textContent = summary.balanceTargetMv;
                 targetEl.style.color = '#4ade80';
             } else {
@@ -348,14 +359,10 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
 
             const renderBus = (busName, modules) => {
                 let busHtml = `<h2 style="grid-column: 1/-1; margin-top: 20px; color: #3b82f6; border-bottom: 2px solid #3b82f6; padding-bottom: 5px;">Bus ${busName}</h2>`;
-                let visibleCount = 0;
                 for (const mod of modules) {
-                    // Show modules that are present, OR expected, OR first 8 of Bus A
                     const isExpected = (busName === 'A')
                         ? (expectedMaskA & (1 << (mod.cmuId - 1)))
                         : (expectedMaskB & (1 << (mod.cmuId - 1)));
-
-                    if (!mod.present && !isExpected && !(busName === 'A' && mod.cmuId <= 8)) continue;
 
                     if (mod.present) onlineCount++;
 
@@ -364,7 +371,6 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
                     const modMax = validVoltages.length > 0 ? Math.max(...validVoltages) : 0;
                     const modDelta = modMax - modMin;
 
-                    visibleCount++;
                     busHtml += `<div class="module ${mod.present ? '' : 'offline'}">`;
                     busHtml += `<div class="module-header">`;
                     busHtml += `<div class="module-controls">`;
@@ -379,29 +385,31 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
                         const v = mod.voltages[i];
                         const isBalancing = mod.balancing[i];
                         if (isBalancing) balancingCount++;
-                        const cellDelta = v > 0 ? v - modMin : 0;
+                        const hasV = v > 0;
+                        const cellDelta = hasV ? v - modMin : 0;
 
                         let cellClass = 'cell';
                         if (isBalancing) cellClass += ' balancing';
-                        else if (v > 0 && v <= lowestCellMv + 5) cellClass += ' low';
-                        else if (v > 0 && v >= lowestCellMv + 50) cellClass += ' high';
+                        else if (hasV && v <= lowestCellMv + 5) cellClass += ' low';
+                        else if (hasV && v >= lowestCellMv + 50) cellClass += ' high';
 
                         busHtml += `<div class="${cellClass}">`;
                         busHtml += `<span class="cell-num">C${i + 1}</span>`;
-                        busHtml += `${v}`;
-                        busHtml += `<span class="cell-delta">+${cellDelta}</span>`;
+                        busHtml += hasV ? `${v}` : '--';
+                        busHtml += `<span class="cell-delta">${hasV ? ('+' + cellDelta) : '--'}</span>`;
                         busHtml += `</div>`;
                     }
                     busHtml += `</div></div>`;
                 }
-                return visibleCount > 0 ? busHtml : '';
+                return busHtml;
             };
 
             html += renderBus('A', busA);
             html += renderBus('B', busB);
 
             document.getElementById('modulesContainer').innerHTML = html;
-            document.getElementById('modulesOnline').textContent = onlineCount + '/20';
+            const expectedTotal = summary.expectedTotal > 0 ? summary.expectedTotal : 20;
+            document.getElementById('modulesOnline').textContent = onlineCount + '/' + expectedTotal;
             document.getElementById('cellsBalancing').textContent = balancingCount;
             document.getElementById('status').textContent = 'Last update: ' + new Date().toLocaleTimeString();
             document.getElementById('status').className = 'status';

@@ -33,6 +33,9 @@ void test_soc_voltage_calculation() {
     g_bmsSettings.socVoltageCurve[2] = 4100;
     g_bmsSettings.socVoltageCurve[3] = 90;
     
+    // Simulate that at least one CMU has reported
+    g_bmsState.modules[0].present = true;
+    
     // Test low voltage (10%)
     g_bmsState.lowestCellMv = 3100;
     int soc = socCalculateFromVoltage();
@@ -149,6 +152,15 @@ void test_soc_parallel_strings() {
     TEST_ASSERT_FLOAT_WITHIN(1.0f, expectedAmpSec, g_bmsState.ampSeconds);
 }
 
+/**
+ * If no CMUs have reported, SOC should conservatively default to 0%.
+ */
+void test_soc_no_data_defaults_to_zero() {
+    // No module marked present; lowestCellMv still at default sentinel
+    int soc = socCalculateFromVoltage();
+    TEST_ASSERT_EQUAL_INT(0, soc);
+}
+
 #ifndef UNIT_TEST
 void setup() {
     delay(2000); // Wait for serial
@@ -159,6 +171,7 @@ void setup() {
     RUN_TEST(test_soc_coulomb_counting);
     RUN_TEST(test_soc_clamping);
     RUN_TEST(test_soc_parallel_strings);
+    RUN_TEST(test_soc_no_data_defaults_to_zero);
 
     UNITY_END();
 }

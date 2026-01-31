@@ -148,7 +148,7 @@ struct BmsSettings {
         prechargeCurrent(1000),
         contactorHoldDuty(50),
         expectedCmusA(0x3FF),   // Default: expect all 10 CMUs on Bus A
-        expectedCmusB(0x00)     // Default: none on Bus B (must be configured)
+        expectedCmusB(0x3FF)    // Default: expect all 10 CMUs on Bus B (enabled)
     {}
 };
 

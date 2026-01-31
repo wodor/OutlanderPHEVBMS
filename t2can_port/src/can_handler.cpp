@@ -167,7 +167,7 @@ bool canInit() {
 
     // T-2Can usually has 16MHz crystal. AGENTS.md mentions 8MHz.
     // We use the configured CAN_CRYSTAL_MHZ.
-    MCP2515::CAN_CLOCK clock = (CAN_CRYSTAL_MHZ == 8) ? MCP2515::MCP_8MHZ : MCP2515::MCP_16MHZ;
+    CAN_CLOCK clock = (CAN_CRYSTAL_MHZ == 8) ? MCP_8MHZ : MCP_16MHZ;
 
     if (s_canA.setBitrate(CAN_500KBPS, clock) != MCP2515::ERROR_OK) {
         Serial.println("[CAN-A] ERROR: Failed to set bitrate!");

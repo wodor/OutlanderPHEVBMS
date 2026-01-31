@@ -27,12 +27,42 @@ void protectionInit() {
 bool protectionCheck() {
     bool allOk = true;
     
-    // Check if we have valid data
-    if (!g_bmsState.hasAnyData()) {
-        return true;  // No data yet, assume OK
+    // Check communication with expected CMUs (runs even if no cell data yet)
+    bool allCmusOk = true;
+    for (int m = 0; m < 10; m++) {
+        // Bus A
+        if (g_bmsSettings.expectedCmusA & (1 << m)) {
+            if (!g_bmsState.modules[m].present || (millis() - g_bmsState.modules[m].lastSeenTime > 5000)) {
+                allCmusOk = false;
+            }
+        }
+        // Bus B
+        if (g_bmsSettings.expectedCmusB & (1 << m)) {
+            int idx = m + 10;
+            if (!g_bmsState.modules[idx].present || (millis() - g_bmsState.modules[idx].lastSeenTime > 5000)) {
+                allCmusOk = false;
+            }
+        }
+    }
+
+    // Apply a startup grace period of 10 seconds before triggering communication faults
+    if (!allCmusOk && millis() > 10000) {
+        if (!s_commFault) {
+            Serial.println("[PROTECTION] COMMUNICATION FAULT: One or more expected CMUs are offline");
+            s_commFault = true;
+        }
+        allOk = false;
+    } else if (allCmusOk) {
+        s_commFault = false;
     }
     
-    // Update pack statistics first
+    // If we still have zero data from CMUs, skip voltage/temperature checks
+    // but keep communication fault result.
+    if (!g_bmsState.hasAnyData()) {
+        return allOk && !s_commFault;
+    }
+    
+    // Update pack statistics now that we know we have data
     g_bmsState.updatePackStatistics();
     
     float lowCellV = g_bmsState.lowestCellMv / 1000.0f;   // Convert to volts
@@ -130,35 +160,6 @@ bool protectionCheck() {
         // Note: Cell imbalance is a warning, not a hard fault
     } else if (cellDelta < (g_bmsSettings.cellGap * 0.8f)) {
         s_cellImbalanceFault = false;
-    }
-    
-    // Check communication with expected CMUs
-    bool allCmusOk = true;
-    for (int m = 0; m < 10; m++) {
-        // Bus A
-        if (g_bmsSettings.expectedCmusA & (1 << m)) {
-            if (!g_bmsState.modules[m].present || (millis() - g_bmsState.modules[m].lastSeenTime > 5000)) {
-                allCmusOk = false;
-            }
-        }
-        // Bus B
-        if (g_bmsSettings.expectedCmusB & (1 << m)) {
-            int idx = m + 10;
-            if (!g_bmsState.modules[idx].present || (millis() - g_bmsState.modules[idx].lastSeenTime > 5000)) {
-                allCmusOk = false;
-            }
-        }
-    }
-
-    // Apply a startup grace period of 10 seconds before triggering communication faults
-    if (!allCmusOk && millis() > 10000) {
-        if (!s_commFault) {
-            Serial.println("[PROTECTION] COMMUNICATION FAULT: One or more expected CMUs are offline");
-            s_commFault = true;
-        }
-        allOk = false;
-    } else if (allCmusOk) {
-        s_commFault = false;
     }
 
     // Return false if any fault is active (even if latched)
