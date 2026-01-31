@@ -104,6 +104,7 @@ static void processFrame(uint32_t canId, uint8_t dlc, uint8_t* data, int busInde
 
     // Mark this CMU as present
     g_bmsState.modules[cmuIndex].present = true;
+    g_bmsState.modules[cmuIndex].lastSeenTime = millis();
     g_bmsState.lastCanMessageTime = millis();
 
     CmuData& cmu = g_bmsState.modules[cmuIndex];

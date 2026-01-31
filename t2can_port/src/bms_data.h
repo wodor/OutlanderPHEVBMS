@@ -31,9 +31,10 @@ struct CmuData {
     long temperatures[TEMPS_PER_MODULE]; // Temperatures (raw value, multiply by 0.001 for °C)
     int  balanceStatus;                  // Bitmask: which cells are balancing (1=balancing)
     bool present;                        // Have we received data from this CMU?
+    unsigned long lastSeenTime;          // millis() when last message was received
 
     // Constructor - initializes all values to safe defaults
-    CmuData() : balanceStatus(0), present(false) {
+    CmuData() : balanceStatus(0), present(false), lastSeenTime(0) {
         // Zero-initialize arrays
         // memset is a C function that fills memory with a value (here: 0)
         memset(voltages, 0, sizeof(voltages));
@@ -320,3 +321,13 @@ struct BmsState {
  */
 extern BmsState g_bmsState;
 extern BmsSettings g_bmsSettings;
+
+/**
+ * Load settings from NVS
+ */
+void settingsLoad();
+
+/**
+ * Save settings to NVS
+ */
+void settingsSave();

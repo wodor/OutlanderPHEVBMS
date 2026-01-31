@@ -66,6 +66,7 @@ static void handleCommand(char cmd) {
             if (Serial.available()) {
                 String s = Serial.readStringUntil('\n');
                 g_bmsSettings.expectedCmusA = strtoul(s.c_str(), NULL, 16) & 0x3FF;
+                settingsSave();
                 Serial.printf("Updated Bus A mask to: 0x%03X\n", g_bmsSettings.expectedCmusA);
             }
             break;
@@ -81,6 +82,7 @@ static void handleCommand(char cmd) {
             if (Serial.available()) {
                 String s = Serial.readStringUntil('\n');
                 g_bmsSettings.expectedCmusB = strtoul(s.c_str(), NULL, 16) & 0x3FF;
+                settingsSave();
                 Serial.printf("Updated Bus B mask to: 0x%03X\n", g_bmsSettings.expectedCmusB);
             }
             break;

@@ -128,7 +128,9 @@ static String buildSummaryJson() {
     json += "\"balanceTargetMv\":" + String(g_bmsState.balancingEnabled ? g_bmsState.lowestCellMv : 0) + ",";
     json += "\"cellsBalancing\":" + String(balancingCount) + ",";
     json += "\"protectionStatus\":\"" + String(protectionGetStatus()) + "\",";
-    json += "\"msSinceCanMsg\":" + String(msSinceCan);
+    json += "\"msSinceCanMsg\":" + String(msSinceCan) + ",";
+    json += "\"expectedCmusA\":" + String(g_bmsSettings.expectedCmusA) + ",";
+    json += "\"expectedCmusB\":" + String(g_bmsSettings.expectedCmusB);
     json += "}";
 
     return json;
@@ -182,6 +184,8 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             border-bottom: 1px solid #333;
             padding-bottom: 8px;
         }
+        .module-controls { display: flex; align-items: center; gap: 8px; }
+        .expected-chk { cursor: pointer; }
         .module-title { font-weight: bold; }
         .temps { font-size: 0.85em; color: #f59e0b; }
         .cells { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
@@ -281,10 +285,14 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
     <script>
         let balancingEnabled = false;
         let lowestCellMv = 5000;
+        let expectedMaskA = 0;
+        let expectedMaskB = 0;
 
         function updateDashboard(data, summary) {
             lowestCellMv = data.lowestCellMv;
             balancingEnabled = data.balancingEnabled;
+            expectedMaskA = summary.expectedCmusA;
+            expectedMaskB = summary.expectedCmusB;
 
             // Update CAN status
             const canEl = document.getElementById('canStatus');
@@ -354,9 +362,16 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
                     const modMax = validVoltages.length > 0 ? Math.max(...validVoltages) : 0;
                     const modDelta = modMax - modMin;
 
+                    const isExpected = (busName === 'A')
+                        ? (expectedMaskA & (1 << (mod.cmuId - 1)))
+                        : (expectedMaskB & (1 << (mod.cmuId - 1)));
+
                     busHtml += `<div class="module ${mod.present ? '' : 'offline'}">`;
                     busHtml += `<div class="module-header">`;
+                    busHtml += `<div class="module-controls">`;
+                    busHtml += `<input type="checkbox" class="expected-chk" title="Expected CMU" ${isExpected ? 'checked' : ''} onchange="updateExpected('${busName}', ${mod.cmuId}, this.checked)">`;
                     busHtml += `<span class="module-title">CMU ${mod.cmuId}<span class="module-delta">Δ${modDelta}mV</span></span>`;
+                    busHtml += `</div>`;
                     busHtml += `<span class="temps">${mod.temperatures.map(t => t.toFixed(1) + '°C').join(' | ')}</span>`;
                     busHtml += `</div>`;
                     busHtml += `<div class="cells">`;
@@ -420,6 +435,31 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             }
         }
 
+        async function updateExpected(bus, cmuId, isChecked) {
+            try {
+                let mask = (bus === 'A') ? expectedMaskA : expectedMaskB;
+                if (isChecked) {
+                    mask |= (1 << (cmuId - 1));
+                } else {
+                    mask &= ~(1 << (cmuId - 1));
+                }
+
+                const formData = new FormData();
+                formData.append(bus === 'A' ? 'expectedCmusA' : 'expectedCmusB', mask);
+
+                const response = await fetch('/api/config', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (response.ok) {
+                    fetchData();
+                }
+            } catch (err) {
+                console.error('Update expected failed:', err);
+            }
+        }
+
         // Initial fetch and auto-refresh every 1 second
         fetchData();
         setInterval(fetchData, 1000);
@@ -469,6 +509,18 @@ static void handleApiBalancing(AsyncWebServerRequest* request) {
     request->send(200, "application/json", json);
 }
 
+static void handleApiConfig(AsyncWebServerRequest* request) {
+    if (request->hasParam("expectedCmusA", true)) {
+        g_bmsSettings.expectedCmusA = request->getParam("expectedCmusA", true)->value().toInt();
+    }
+    if (request->hasParam("expectedCmusB", true)) {
+        g_bmsSettings.expectedCmusB = request->getParam("expectedCmusB", true)->value().toInt();
+    }
+
+    settingsSave();
+    request->send(200, "application/json", "{\"status\":\"ok\"}");
+}
+
 
 static void handleNotFound(AsyncWebServerRequest* request) {
     request->send(404, "application/json", "{\"error\":\"Not found\"}");
@@ -507,6 +559,7 @@ void webServerInit() {
 
     s_server.on("/api/summary", HTTP_GET, handleApiSummary);
     s_server.on("/api/balancing", HTTP_POST, handleApiBalancing);
+    s_server.on("/api/config", HTTP_POST, handleApiConfig);
 
     // 404 handler
     s_server.onNotFound(handleNotFound);

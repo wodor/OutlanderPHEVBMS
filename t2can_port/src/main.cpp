@@ -99,6 +99,9 @@ void setup() {
     Serial.println("========================================");
     Serial.println();
 
+    // Load settings from NVS
+    settingsLoad();
+
     // Initialize CAN bus
     if (!canInit()) {
         Serial.println("FATAL: CAN initialization failed!");
