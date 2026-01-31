@@ -33,9 +33,9 @@ constexpr uint8_t PIN_MCP2515_MOSI = 11;  // Master Out Slave In - data TO the M
 constexpr uint8_t PIN_MCP2515_MISO = 13;  // Master In Slave Out - data FROM the MCP2515
 constexpr uint8_t PIN_MCP2515_RST  = 9;   // Reset pin - low pulse reboots the chip
 
-// Built-in ESP32 TWAI (CAN-B) - not used in this project but available
-constexpr uint8_t PIN_CAN_TX = 7;
-constexpr uint8_t PIN_CAN_RX = 6;
+// Built-in ESP32 TWAI (Bus B)
+constexpr uint8_t PIN_CAN_TX = 17;
+constexpr uint8_t PIN_CAN_RX = 18;
 
 // =============================================================================
 // BMS CONFIGURATION
