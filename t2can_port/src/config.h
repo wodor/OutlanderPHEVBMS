@@ -50,7 +50,7 @@ constexpr uint8_t PIN_CAN_RX = 6;
  * Think of constexpr as 'const' in PHP but evaluated at compile time.
  */
 
-constexpr int BMS_MODULE_COUNT = 10;      // Outlander has 10 CMU (Cell Monitor Units)
+constexpr int BMS_MODULE_COUNT = 20;      // 10 per bus (Bus A + Bus B)
 constexpr int CELLS_PER_MODULE = 8;       // Each CMU monitors 8 cells
 constexpr int TEMPS_PER_MODULE = 3;       // Each CMU has 3 temperature sensors
 

@@ -28,9 +28,13 @@ static AsyncWebServer s_server(80);
  */
 static String buildModuleJson(int moduleIndex) {
     const CmuData& cmu = g_bmsState.modules[moduleIndex];
+    int busIndex = (moduleIndex < 10) ? 0 : 1;
+    int cmuId = (moduleIndex % 10) + 1;
 
     String json = "{";
     json += "\"module\":" + String(moduleIndex + 1) + ",";
+    json += "\"cmuId\":" + String(cmuId) + ",";
+    json += "\"bus\":\"" + String(busIndex == 0 ? "A" : "B") + "\",";
     json += "\"present\":" + String(cmu.present ? "true" : "false") + ",";
 
     // Voltages array
@@ -327,46 +331,63 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
 
             let onlineCount = 0;
             let balancingCount = 0;
+
+            // Group modules by bus
+            const busA = data.modules.filter(m => m.bus === 'A');
+            const busB = data.modules.filter(m => m.bus === 'B');
+
             let html = '';
 
-            for (const mod of data.modules) {
-                if (mod.present) onlineCount++;
+            const renderBus = (busName, modules) => {
+                let hasAnyPresent = modules.some(m => m.present);
+                if (!hasAnyPresent && busName === 'B') return '';
 
-                const validVoltages = mod.voltages.filter(v => v > 0);
-                const modMin = validVoltages.length > 0 ? Math.min(...validVoltages) : 0;
-                const modMax = validVoltages.length > 0 ? Math.max(...validVoltages) : 0;
-                const modDelta = modMax - modMin;
+                let busHtml = `<h2 style="grid-column: 1/-1; margin-top: 20px; color: #3b82f6; border-bottom: 2px solid #3b82f6; padding-bottom: 5px;">Bus ${busName}</h2>`;
+                for (const mod of modules) {
+                    // Only show modules that are present or have cmuId <= 10
+                    if (!mod.present && mod.cmuId > 10) continue;
 
-                html += `<div class="module ${mod.present ? '' : 'offline'}">`;
-                html += `<div class="module-header">`;
-                html += `<span class="module-title">CMU ${mod.module}<span class="module-delta">Δ${modDelta}mV</span></span>`;
-                html += `<span class="temps">${mod.temperatures.map(t => t.toFixed(1) + '°C').join(' | ')}</span>`;
-                html += `</div>`;
-                html += `<div class="cells">`;
+                    if (mod.present) onlineCount++;
 
-                for (let i = 0; i < mod.voltages.length; i++) {
-                    const v = mod.voltages[i];
-                    const isBalancing = mod.balancing[i];
-                    if (isBalancing) balancingCount++;
-                    const cellDelta = v > 0 ? v - modMin : 0;
+                    const validVoltages = mod.voltages.filter(v => v > 0);
+                    const modMin = validVoltages.length > 0 ? Math.min(...validVoltages) : 0;
+                    const modMax = validVoltages.length > 0 ? Math.max(...validVoltages) : 0;
+                    const modDelta = modMax - modMin;
 
-                    let cellClass = 'cell';
-                    if (isBalancing) cellClass += ' balancing';
-                    else if (v > 0 && v <= lowestCellMv + 5) cellClass += ' low';
-                    else if (v > 0 && v >= lowestCellMv + 50) cellClass += ' high';
+                    busHtml += `<div class="module ${mod.present ? '' : 'offline'}">`;
+                    busHtml += `<div class="module-header">`;
+                    busHtml += `<span class="module-title">CMU ${mod.cmuId}<span class="module-delta">Δ${modDelta}mV</span></span>`;
+                    busHtml += `<span class="temps">${mod.temperatures.map(t => t.toFixed(1) + '°C').join(' | ')}</span>`;
+                    busHtml += `</div>`;
+                    busHtml += `<div class="cells">`;
 
-                    html += `<div class="${cellClass}">`;
-                    html += `<span class="cell-num">C${i + 1}</span>`;
-                    html += `${v}`;
-                    html += `<span class="cell-delta">+${cellDelta}</span>`;
-                    html += `</div>`;
+                    for (let i = 0; i < mod.voltages.length; i++) {
+                        const v = mod.voltages[i];
+                        const isBalancing = mod.balancing[i];
+                        if (isBalancing) balancingCount++;
+                        const cellDelta = v > 0 ? v - modMin : 0;
+
+                        let cellClass = 'cell';
+                        if (isBalancing) cellClass += ' balancing';
+                        else if (v > 0 && v <= lowestCellMv + 5) cellClass += ' low';
+                        else if (v > 0 && v >= lowestCellMv + 50) cellClass += ' high';
+
+                        busHtml += `<div class="${cellClass}">`;
+                        busHtml += `<span class="cell-num">C${i + 1}</span>`;
+                        busHtml += `${v}`;
+                        busHtml += `<span class="cell-delta">+${cellDelta}</span>`;
+                        busHtml += `</div>`;
+                    }
+                    busHtml += `</div></div>`;
                 }
+                return busHtml;
+            };
 
-                html += `</div></div>`;
-            }
+            html += renderBus('A', busA);
+            html += renderBus('B', busB);
 
             document.getElementById('modulesContainer').innerHTML = html;
-            document.getElementById('modulesOnline').textContent = onlineCount + '/8';
+            document.getElementById('modulesOnline').textContent = onlineCount + '/20';
             document.getElementById('cellsBalancing').textContent = balancingCount;
             document.getElementById('status').textContent = 'Last update: ' + new Date().toLocaleTimeString();
             document.getElementById('status').className = 'status';
@@ -422,7 +443,7 @@ static void handleApiBms(AsyncWebServerRequest* request) {
 
 static void handleApiModuleN(AsyncWebServerRequest* request, int moduleNum) {
     if (moduleNum < 1 || moduleNum > BMS_MODULE_COUNT) {
-        request->send(400, "application/json", "{\"error\":\"Invalid module number (1-8)\"}");
+        request->send(400, "application/json", "{\"error\":\"Invalid module number (1-20)\"}");
         return;
     }
 
@@ -471,6 +492,18 @@ void webServerInit() {
     s_server.on("/api/module/6", HTTP_GET, [](AsyncWebServerRequest* r) { handleApiModuleN(r, 6); });
     s_server.on("/api/module/7", HTTP_GET, [](AsyncWebServerRequest* r) { handleApiModuleN(r, 7); });
     s_server.on("/api/module/8", HTTP_GET, [](AsyncWebServerRequest* r) { handleApiModuleN(r, 8); });
+    s_server.on("/api/module/9", HTTP_GET, [](AsyncWebServerRequest* r) { handleApiModuleN(r, 9); });
+    s_server.on("/api/module/10", HTTP_GET, [](AsyncWebServerRequest* r) { handleApiModuleN(r, 10); });
+    s_server.on("/api/module/11", HTTP_GET, [](AsyncWebServerRequest* r) { handleApiModuleN(r, 11); });
+    s_server.on("/api/module/12", HTTP_GET, [](AsyncWebServerRequest* r) { handleApiModuleN(r, 12); });
+    s_server.on("/api/module/13", HTTP_GET, [](AsyncWebServerRequest* r) { handleApiModuleN(r, 13); });
+    s_server.on("/api/module/14", HTTP_GET, [](AsyncWebServerRequest* r) { handleApiModuleN(r, 14); });
+    s_server.on("/api/module/15", HTTP_GET, [](AsyncWebServerRequest* r) { handleApiModuleN(r, 15); });
+    s_server.on("/api/module/16", HTTP_GET, [](AsyncWebServerRequest* r) { handleApiModuleN(r, 16); });
+    s_server.on("/api/module/17", HTTP_GET, [](AsyncWebServerRequest* r) { handleApiModuleN(r, 17); });
+    s_server.on("/api/module/18", HTTP_GET, [](AsyncWebServerRequest* r) { handleApiModuleN(r, 18); });
+    s_server.on("/api/module/19", HTTP_GET, [](AsyncWebServerRequest* r) { handleApiModuleN(r, 19); });
+    s_server.on("/api/module/20", HTTP_GET, [](AsyncWebServerRequest* r) { handleApiModuleN(r, 20); });
 
     s_server.on("/api/summary", HTTP_GET, handleApiSummary);
     s_server.on("/api/balancing", HTTP_POST, handleApiBalancing);

@@ -56,12 +56,44 @@ static void handleCommand(char cmd) {
             canPrintDiagnostics();
             break;
 
+        case 'A': { // Set Bus A expected CMUs
+            Serial.println();
+            Serial.printf("Current Bus A expected CMUs: 0x%03X\n", g_bmsSettings.expectedCmusA);
+            Serial.println("Enter new hex mask (e.g., 3FF for CMUs 1-10):");
+            while (Serial.available()) Serial.read();
+            long start = millis();
+            while (!Serial.available() && millis() - start < 5000) delay(10);
+            if (Serial.available()) {
+                String s = Serial.readStringUntil('\n');
+                g_bmsSettings.expectedCmusA = strtoul(s.c_str(), NULL, 16) & 0x3FF;
+                Serial.printf("Updated Bus A mask to: 0x%03X\n", g_bmsSettings.expectedCmusA);
+            }
+            break;
+        }
+
+        case 'B': { // Set Bus B expected CMUs
+            Serial.println();
+            Serial.printf("Current Bus B expected CMUs: 0x%03X\n", g_bmsSettings.expectedCmusB);
+            Serial.println("Enter new hex mask (e.g., 3FF for CMUs 1-10):");
+            while (Serial.available()) Serial.read();
+            long start = millis();
+            while (!Serial.available() && millis() - start < 5000) delay(10);
+            if (Serial.available()) {
+                String s = Serial.readStringUntil('\n');
+                g_bmsSettings.expectedCmusB = strtoul(s.c_str(), NULL, 16) & 0x3FF;
+                Serial.printf("Updated Bus B mask to: 0x%03X\n", g_bmsSettings.expectedCmusB);
+            }
+            break;
+        }
+
         case 'h':  // Help
         case '?':
             Serial.println();
             Serial.println("=== Commands ===");
             Serial.println("  b - Toggle cell balancing");
             Serial.println("  c - Show CAN bus diagnostics");
+            Serial.println("  A - Set Bus A expected CMUs mask (hex)");
+            Serial.println("  B - Set Bus B expected CMUs mask (hex)");
             Serial.println("  d - Toggle debug mode (show raw CAN)");
             Serial.println("  r - Show full report");
             Serial.println("  R - Reset SOC to 100%");
@@ -146,17 +178,26 @@ static void printFullReport() {
                   g_bmsState.highestCellMv - g_bmsState.lowestCellMv,
                   g_bmsState.avgCellVoltage,
                   g_bmsState.lowestTemp, g_bmsState.avgTemp, g_bmsState.highestTemp);
-    Serial.printf("║  Modules: %d/8  Balancing: %-3s (%d cells)  Protection: %-16s    ║\n",
-                  presentCount,
+    Serial.printf("║  Modules: %2d/%-2d Balancing: %-3s (%2d cells) Protection: %-16s    ║\n",
+                  presentCount, BMS_MODULE_COUNT,
                   g_bmsState.balancingEnabled ? "ON" : "OFF",
                   balancingCount,
                   protectionGetStatus());
     Serial.println("╠═══════════════════════════════════════════════════════════════════════════╣");
     Serial.println("║  MODULES                                                                  ║");
 
-    for (int m = 0; m < BMS_MODULE_COUNT; m++) {
-        const CmuData& cmu = g_bmsState.modules[m];
-        if (!cmu.present) continue;
+    for (int bus = 0; bus < 2; bus++) {
+        bool busHeaderPrinted = false;
+        for (int m = 0; m < 10; m++) {
+            int idx = bus * 10 + m;
+            const CmuData& cmu = g_bmsState.modules[idx];
+            if (!cmu.present) continue;
+
+            if (!busHeaderPrinted) {
+                Serial.println("╟───────────────────────────────────────────────────────────────────────────╢");
+                Serial.printf("║  BUS %c                                                                    ║\n", bus == 0 ? 'A' : 'B');
+                busHeaderPrinted = true;
+            }
 
         long modMin = 9999, modMax = 0;
         for (int c = 0; c < CELLS_PER_MODULE; c++) {
@@ -166,10 +207,10 @@ static void printFullReport() {
             }
         }
 
-        Serial.println("╟───────────────────────────────────────────────────────────────────────────╢");
-        Serial.printf("║  CMU %2d  d%4ldmV  Temps: %5.1fC | %5.1fC                                 ║\n",
-                      m + 1, modMax - modMin,
-                      cmu.temperatures[0] / 1000.0f, cmu.temperatures[1] / 1000.0f);
+            Serial.println("╟───────────────────────────────────────────────────────────────────────────╢");
+            Serial.printf("║  CMU %2d  d%4ldmV  Temps: %5.1fC | %5.1fC                                 ║\n",
+                          m + 1, modMax - modMin,
+                          cmu.temperatures[0] / 1000.0f, cmu.temperatures[1] / 1000.0f);
         Serial.print("║  ");
         for (int c = 0; c < CELLS_PER_MODULE; c++) {
             bool isBalancing = (cmu.balanceStatus >> c) & 1;
@@ -180,7 +221,8 @@ static void printFullReport() {
             else if (isBalancing) marker = '~';
             Serial.printf("%4ld%c ", cmu.voltages[c], marker);
         }
-        Serial.println("mV                        ║");
+            Serial.println("mV                        ║");
+        }
     }
 
     Serial.println("╚═══════════════════════════════════════════════════════════════════════════╝");
@@ -192,13 +234,15 @@ static void printDetailedStats() {
     Serial.println("================= DETAILED STATISTICS ====================");
     
     // Print each present module
-    for (int m = 0; m < BMS_MODULE_COUNT; m++) {
-        const CmuData& cmu = g_bmsState.modules[m];
+    for (int bus = 0; bus < 2; bus++) {
+        for (int m = 0; m < 10; m++) {
+            int idx = bus * 10 + m;
+            const CmuData& cmu = g_bmsState.modules[idx];
 
-        if (!cmu.present) continue;
+            if (!cmu.present) continue;
 
-        // Module header with balance status
-        Serial.printf("CMU %d | Bal: ", m + 1);
+            // Module header with balance status
+            Serial.printf("Bus %c | CMU %d | Bal: ", bus == 0 ? 'A' : 'B', m + 1);
 
         /**
          * EMBEDDED CONCEPT: Bitmask Display
@@ -234,6 +278,7 @@ static void printDetailedStats() {
             Serial.printf("%.1fC ", tempC);
         }
         Serial.println();
+        }
     }
     
     Serial.println("===========================================================");

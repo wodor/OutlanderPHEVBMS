@@ -102,6 +102,10 @@ struct BmsSettings {
     int prechargeCurrent;       // Max current before closing main (default: 1000mA)
     int contactorHoldDuty;      // PWM duty cycle to hold contactor (default: 50)
     
+    // Expected CMUs configuration (bitmask for IDs 1-10)
+    uint16_t expectedCmusA;     // Expected CMUs on Bus A
+    uint16_t expectedCmusB;     // Expected CMUs on Bus B
+
     // Constructor with defaults
     BmsSettings() :
         overVoltage(4.2f),
@@ -141,7 +145,9 @@ struct BmsSettings {
         currentDeadband(5),
         prechargeTimeMs(5000),
         prechargeCurrent(1000),
-        contactorHoldDuty(50)
+        contactorHoldDuty(50),
+        expectedCmusA(0x3FF),   // Default: expect all 10 CMUs on Bus A
+        expectedCmusB(0x00)     // Default: none on Bus B (must be configured)
     {}
 };
 
