@@ -47,8 +47,8 @@ void settingsLoad() {
 
     // Load expected CMU masks
     // If key doesn't exist, it uses the current value (set by BmsSettings constructor)
-    g_bmsSettings.expectedCmusA = s_prefs.getUShort("cmusA", g_bmsSettings.expectedCmusA);
-    g_bmsSettings.expectedCmusB = s_prefs.getUShort("cmusB", g_bmsSettings.expectedCmusB);
+    g_bmsSettings.expectedCmusA = (uint16_t)s_prefs.getUInt("cmusA", g_bmsSettings.expectedCmusA);
+    g_bmsSettings.expectedCmusB = (uint16_t)s_prefs.getUInt("cmusB", g_bmsSettings.expectedCmusB);
 
     s_prefs.end();
 
@@ -60,8 +60,8 @@ void settingsLoad() {
 void settingsSave() {
     s_prefs.begin(NVS_NAMESPACE, false); // Read/write
 
-    s_prefs.putUShort("cmusA", g_bmsSettings.expectedCmusA);
-    s_prefs.putUShort("cmusB", g_bmsSettings.expectedCmusB);
+    s_prefs.putUInt("cmusA", g_bmsSettings.expectedCmusA);
+    s_prefs.putUInt("cmusB", g_bmsSettings.expectedCmusB);
 
     s_prefs.end();
     Serial.println("[BMS] Settings saved to NVS");
