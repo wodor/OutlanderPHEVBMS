@@ -155,6 +155,11 @@ void socReset(int socPercent) {
 }
 
 int socCalculateFromVoltage() {
+    // If we have zero CMU data, we don't know actual voltage. Be conservative.
+    if (!g_bmsState.hasAnyData()) {
+        return 0;
+    }
+    
     // Get lowest cell voltage (in mV)
     long lowCellMv = g_bmsState.lowestCellMv;
     

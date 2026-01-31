@@ -285,12 +285,12 @@ void test_soc_float_to_int_overflow() {
 
 /**
  * Test module array bounds
- * SAFETY: Accessing modules[10] or higher would corrupt memory
+ * SAFETY: Accessing modules[20] or higher would corrupt memory
  */
 void test_module_array_bounds() {
     // This test verifies we don't access out of bounds
     // Real code should never do this, but let's verify constants
-    TEST_ASSERT_TRUE(BMS_MODULE_COUNT == 10);
+    TEST_ASSERT_TRUE(BMS_MODULE_COUNT == 20);
     
     // Verify loops use correct bounds
     for (int m = 0; m < BMS_MODULE_COUNT; m++) {
@@ -298,7 +298,7 @@ void test_module_array_bounds() {
         // Should not crash
     }
     
-    // Verify we can't accidentally access modules[10]
+    // Verify we can't accidentally access modules[20]
     // (This would be a compile error, but we document the limit)
 }
 

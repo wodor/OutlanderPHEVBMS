@@ -12,6 +12,7 @@ static bool s_underVoltFault = false;
 static bool s_overTempFault = false;
 static bool s_underTempFault = false;
 static bool s_cellImbalanceFault = false;
+static bool s_commFault = false;
 
 // Fault latch times (for debouncing)
 static unsigned long s_underVoltTime = 0;
@@ -26,12 +27,42 @@ void protectionInit() {
 bool protectionCheck() {
     bool allOk = true;
     
-    // Check if we have valid data
-    if (!g_bmsState.hasAnyData()) {
-        return true;  // No data yet, assume OK
+    // Check communication with expected CMUs (runs even if no cell data yet)
+    bool allCmusOk = true;
+    for (int m = 0; m < 10; m++) {
+        // Bus A
+        if (g_bmsSettings.expectedCmusA & (1 << m)) {
+            if (!g_bmsState.modules[m].present || (millis() - g_bmsState.modules[m].lastSeenTime > 5000)) {
+                allCmusOk = false;
+            }
+        }
+        // Bus B
+        if (g_bmsSettings.expectedCmusB & (1 << m)) {
+            int idx = m + 10;
+            if (!g_bmsState.modules[idx].present || (millis() - g_bmsState.modules[idx].lastSeenTime > 5000)) {
+                allCmusOk = false;
+            }
+        }
+    }
+
+    // Apply a startup grace period of 10 seconds before triggering communication faults
+    if (!allCmusOk && millis() > 10000) {
+        if (!s_commFault) {
+            Serial.println("[PROTECTION] COMMUNICATION FAULT: One or more expected CMUs are offline");
+            s_commFault = true;
+        }
+        allOk = false;
+    } else if (allCmusOk) {
+        s_commFault = false;
     }
     
-    // Update pack statistics first
+    // If we still have zero data from CMUs, skip voltage/temperature checks
+    // but keep communication fault result.
+    if (!g_bmsState.hasAnyData()) {
+        return allOk && !s_commFault;
+    }
+    
+    // Update pack statistics now that we know we have data
     g_bmsState.updatePackStatistics();
     
     float lowCellV = g_bmsState.lowestCellMv / 1000.0f;   // Convert to volts
@@ -130,9 +161,9 @@ bool protectionCheck() {
     } else if (cellDelta < (g_bmsSettings.cellGap * 0.8f)) {
         s_cellImbalanceFault = false;
     }
-    
+
     // Return false if any fault is active (even if latched)
-    if (s_overVoltFault || s_underVoltFault || s_overTempFault || s_underTempFault) {
+    if (s_overVoltFault || s_underVoltFault || s_overTempFault || s_underTempFault || s_commFault) {
         return false;
     }
     
@@ -144,6 +175,7 @@ const char* protectionGetStatus() {
     if (s_underVoltFault) return "UNDERVOLTAGE";
     if (s_overTempFault) return "OVERTEMP";
     if (s_underTempFault) return "UNDERTEMP";
+    if (s_commFault) return "COMMUNICATION FAULT";
     if (s_cellImbalanceFault) return "IMBALANCE WARNING";
     return "OK";
 }
@@ -196,6 +228,7 @@ void protectionClearFaults() {
     s_underVoltFault = false;
     s_overTempFault = false;
     s_underTempFault = false;
+    s_commFault = false;
     s_cellImbalanceFault = false;
     s_underVoltTime = 0;
     s_overVoltTime = 0;

@@ -27,6 +27,7 @@ void test_soc_reset();
 void test_soc_coulomb_counting();
 void test_soc_clamping();
 void test_soc_parallel_strings();
+void test_soc_no_data_defaults_to_zero();
 
 // Test functions from test_protection.cpp
 void test_overvoltage_detection();
@@ -38,6 +39,7 @@ void test_can_charge();
 void test_can_discharge();
 void test_protection_hysteresis();
 void test_fault_clearing();
+void test_comm_fault_no_data();
 
 // Test functions from test_current_sense.cpp
 void test_current_sense_init();
@@ -104,6 +106,7 @@ int main(int argc, char **argv) {
     RUN_TEST(test_soc_coulomb_counting);
     RUN_TEST(test_soc_clamping);
     RUN_TEST(test_soc_parallel_strings);
+    RUN_TEST(test_soc_no_data_defaults_to_zero);
 
     // Protection tests
     RUN_TEST(test_overvoltage_detection);
@@ -115,6 +118,7 @@ int main(int argc, char **argv) {
     RUN_TEST(test_can_discharge);
     RUN_TEST(test_protection_hysteresis);
     RUN_TEST(test_fault_clearing);
+    RUN_TEST(test_comm_fault_no_data);
 
     // Current sense tests
     RUN_TEST(test_current_sense_init);

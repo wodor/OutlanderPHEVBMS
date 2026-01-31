@@ -31,9 +31,10 @@ struct CmuData {
     long temperatures[TEMPS_PER_MODULE]; // Temperatures (raw value, multiply by 0.001 for °C)
     int  balanceStatus;                  // Bitmask: which cells are balancing (1=balancing)
     bool present;                        // Have we received data from this CMU?
+    unsigned long lastSeenTime;          // millis() when last message was received
 
     // Constructor - initializes all values to safe defaults
-    CmuData() : balanceStatus(0), present(false) {
+    CmuData() : balanceStatus(0), present(false), lastSeenTime(0) {
         // Zero-initialize arrays
         // memset is a C function that fills memory with a value (here: 0)
         memset(voltages, 0, sizeof(voltages));
@@ -102,6 +103,10 @@ struct BmsSettings {
     int prechargeCurrent;       // Max current before closing main (default: 1000mA)
     int contactorHoldDuty;      // PWM duty cycle to hold contactor (default: 50)
     
+    // Expected CMUs configuration (bitmask for IDs 1-10)
+    uint16_t expectedCmusA;     // Expected CMUs on Bus A
+    uint16_t expectedCmusB;     // Expected CMUs on Bus B
+
     // Constructor with defaults
     BmsSettings() :
         overVoltage(4.2f),
@@ -141,7 +146,9 @@ struct BmsSettings {
         currentDeadband(5),
         prechargeTimeMs(5000),
         prechargeCurrent(1000),
-        contactorHoldDuty(50)
+        contactorHoldDuty(50),
+        expectedCmusA(0x3FF),   // Default: expect all 10 CMUs on Bus A
+        expectedCmusB(0x3FF)    // Default: expect all 10 CMUs on Bus B (enabled)
     {}
 };
 
@@ -314,3 +321,13 @@ struct BmsState {
  */
 extern BmsState g_bmsState;
 extern BmsSettings g_bmsSettings;
+
+/**
+ * Load settings from NVS
+ */
+void settingsLoad();
+
+/**
+ * Save settings to NVS
+ */
+void settingsSave();

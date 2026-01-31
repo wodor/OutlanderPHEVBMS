@@ -28,9 +28,13 @@ static AsyncWebServer s_server(80);
  */
 static String buildModuleJson(int moduleIndex) {
     const CmuData& cmu = g_bmsState.modules[moduleIndex];
+    int busIndex = (moduleIndex < 10) ? 0 : 1;
+    int cmuId = (moduleIndex % 10) + 1;
 
     String json = "{";
     json += "\"module\":" + String(moduleIndex + 1) + ",";
+    json += "\"cmuId\":" + String(cmuId) + ",";
+    json += "\"bus\":\"" + String(busIndex == 0 ? "A" : "B") + "\",";
     json += "\"present\":" + String(cmu.present ? "true" : "false") + ",";
 
     // Voltages array
@@ -90,6 +94,7 @@ static String buildFullBmsJson() {
 static String buildSummaryJson() {
     int presentCount = 0;
     int balancingCount = 0;
+    int expectedCount = 0;
 
     for (int m = 0; m < BMS_MODULE_COUNT; m++) {
         if (g_bmsState.modules[m].present) {
@@ -101,6 +106,12 @@ static String buildSummaryJson() {
                 }
             }
         }
+    }
+
+    // Count expected CMUs (10 per bus)
+    for (int i = 0; i < 10; i++) {
+        if (g_bmsSettings.expectedCmusA & (1 << i)) expectedCount++;
+        if (g_bmsSettings.expectedCmusB & (1 << i)) expectedCount++;
     }
 
     // Calculate seconds since last CAN message
@@ -124,7 +135,11 @@ static String buildSummaryJson() {
     json += "\"balanceTargetMv\":" + String(g_bmsState.balancingEnabled ? g_bmsState.lowestCellMv : 0) + ",";
     json += "\"cellsBalancing\":" + String(balancingCount) + ",";
     json += "\"protectionStatus\":\"" + String(protectionGetStatus()) + "\",";
-    json += "\"msSinceCanMsg\":" + String(msSinceCan);
+    json += "\"msSinceCanMsg\":" + String(msSinceCan) + ",";
+    json += "\"hasData\":" + String(presentCount > 0 ? "true" : "false") + ",";
+    json += "\"expectedTotal\":" + String(expectedCount) + ",";
+    json += "\"expectedCmusA\":" + String(g_bmsSettings.expectedCmusA) + ",";
+    json += "\"expectedCmusB\":" + String(g_bmsSettings.expectedCmusB);
     json += "}";
 
     return json;
@@ -178,6 +193,8 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             border-bottom: 1px solid #333;
             padding-bottom: 8px;
         }
+        .module-controls { display: flex; align-items: center; gap: 8px; }
+        .expected-chk { cursor: pointer; }
         .module-title { font-weight: bold; }
         .temps { font-size: 0.85em; color: #f59e0b; }
         .cells { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
@@ -277,10 +294,14 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
     <script>
         let balancingEnabled = false;
         let lowestCellMv = 5000;
+        let expectedMaskA = 0;
+        let expectedMaskB = 0;
 
         function updateDashboard(data, summary) {
             lowestCellMv = data.lowestCellMv;
             balancingEnabled = data.balancingEnabled;
+            expectedMaskA = summary.expectedCmusA;
+            expectedMaskB = summary.expectedCmusB;
 
             // Update CAN status
             const canEl = document.getElementById('canStatus');
@@ -295,12 +316,14 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
                 canEl.style.color = '#ef4444';
             }
 
-            document.getElementById('lowestCell').textContent = data.lowestCellMv;
-            document.getElementById('highestCell').textContent = summary.highestCellMv;
-            document.getElementById('packVoltage').textContent = summary.packVoltage;
-            document.getElementById('soc').textContent = summary.soc + '%';
-            document.getElementById('current').textContent = summary.avgCurrentAmps;
-            document.getElementById('avgTemp').textContent = summary.avgTemp;
+            const hasData = summary.hasData;
+            const na = 'N/A';
+            document.getElementById('lowestCell').textContent = hasData ? data.lowestCellMv : na;
+            document.getElementById('highestCell').textContent = hasData ? summary.highestCellMv : na;
+            document.getElementById('packVoltage').textContent = hasData ? summary.packVoltage : na;
+            document.getElementById('soc').textContent = hasData ? (summary.soc + '%') : na;
+            document.getElementById('current').textContent = hasData ? summary.avgCurrentAmps : na;
+            document.getElementById('avgTemp').textContent = hasData ? summary.avgTemp : na;
             
             // Protection status with color
             const protEl = document.getElementById('protection');
@@ -317,7 +340,7 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             document.getElementById('balanceBtn').className = balancingEnabled ? '' : 'off';
             
             const targetEl = document.getElementById('balanceTarget');
-            if (balancingEnabled && summary.balanceTargetMv > 0) {
+            if (balancingEnabled && summary.balanceTargetMv > 0 && hasData) {
                 targetEl.textContent = summary.balanceTargetMv;
                 targetEl.style.color = '#4ade80';
             } else {
@@ -327,46 +350,66 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
 
             let onlineCount = 0;
             let balancingCount = 0;
+
+            // Group modules by bus
+            const busA = data.modules.filter(m => m.bus === 'A');
+            const busB = data.modules.filter(m => m.bus === 'B');
+
             let html = '';
 
-            for (const mod of data.modules) {
-                if (mod.present) onlineCount++;
+            const renderBus = (busName, modules) => {
+                let busHtml = `<h2 style="grid-column: 1/-1; margin-top: 20px; color: #3b82f6; border-bottom: 2px solid #3b82f6; padding-bottom: 5px;">Bus ${busName}</h2>`;
+                for (const mod of modules) {
+                    const isExpected = (busName === 'A')
+                        ? (expectedMaskA & (1 << (mod.cmuId - 1)))
+                        : (expectedMaskB & (1 << (mod.cmuId - 1)));
 
-                const validVoltages = mod.voltages.filter(v => v > 0);
-                const modMin = validVoltages.length > 0 ? Math.min(...validVoltages) : 0;
-                const modMax = validVoltages.length > 0 ? Math.max(...validVoltages) : 0;
-                const modDelta = modMax - modMin;
+                    if (mod.present) onlineCount++;
 
-                html += `<div class="module ${mod.present ? '' : 'offline'}">`;
-                html += `<div class="module-header">`;
-                html += `<span class="module-title">CMU ${mod.module}<span class="module-delta">Δ${modDelta}mV</span></span>`;
-                html += `<span class="temps">${mod.temperatures.map(t => t.toFixed(1) + '°C').join(' | ')}</span>`;
-                html += `</div>`;
-                html += `<div class="cells">`;
+                    const validVoltages = mod.voltages.filter(v => v > 0);
+                    const modMin = validVoltages.length > 0 ? Math.min(...validVoltages) : 0;
+                    const modMax = validVoltages.length > 0 ? Math.max(...validVoltages) : 0;
+                    const modDelta = modMax - modMin;
 
-                for (let i = 0; i < mod.voltages.length; i++) {
-                    const v = mod.voltages[i];
-                    const isBalancing = mod.balancing[i];
-                    if (isBalancing) balancingCount++;
-                    const cellDelta = v > 0 ? v - modMin : 0;
+                    busHtml += `<div class="module ${mod.present ? '' : 'offline'}">`;
+                    busHtml += `<div class="module-header">`;
+                    busHtml += `<div class="module-controls">`;
+                    busHtml += `<input type="checkbox" class="expected-chk" title="Expected CMU" ${isExpected ? 'checked' : ''} onchange="updateExpected('${busName}', ${mod.cmuId}, this.checked)">`;
+                    busHtml += `<span class="module-title">CMU ${mod.cmuId}<span class="module-delta">Δ${modDelta}mV</span></span>`;
+                    busHtml += `</div>`;
+                    busHtml += `<span class="temps">${mod.temperatures.map(t => t.toFixed(1) + '°C').join(' | ')}</span>`;
+                    busHtml += `</div>`;
+                    busHtml += `<div class="cells">`;
 
-                    let cellClass = 'cell';
-                    if (isBalancing) cellClass += ' balancing';
-                    else if (v > 0 && v <= lowestCellMv + 5) cellClass += ' low';
-                    else if (v > 0 && v >= lowestCellMv + 50) cellClass += ' high';
+                    for (let i = 0; i < mod.voltages.length; i++) {
+                        const v = mod.voltages[i];
+                        const isBalancing = mod.balancing[i];
+                        if (isBalancing) balancingCount++;
+                        const hasV = v > 0;
+                        const cellDelta = hasV ? v - modMin : 0;
 
-                    html += `<div class="${cellClass}">`;
-                    html += `<span class="cell-num">C${i + 1}</span>`;
-                    html += `${v}`;
-                    html += `<span class="cell-delta">+${cellDelta}</span>`;
-                    html += `</div>`;
+                        let cellClass = 'cell';
+                        if (isBalancing) cellClass += ' balancing';
+                        else if (hasV && v <= lowestCellMv + 5) cellClass += ' low';
+                        else if (hasV && v >= lowestCellMv + 50) cellClass += ' high';
+
+                        busHtml += `<div class="${cellClass}">`;
+                        busHtml += `<span class="cell-num">C${i + 1}</span>`;
+                        busHtml += hasV ? `${v}` : '--';
+                        busHtml += `<span class="cell-delta">${hasV ? ('+' + cellDelta) : '--'}</span>`;
+                        busHtml += `</div>`;
+                    }
+                    busHtml += `</div></div>`;
                 }
+                return busHtml;
+            };
 
-                html += `</div></div>`;
-            }
+            html += renderBus('A', busA);
+            html += renderBus('B', busB);
 
             document.getElementById('modulesContainer').innerHTML = html;
-            document.getElementById('modulesOnline').textContent = onlineCount + '/8';
+            const expectedTotal = summary.expectedTotal > 0 ? summary.expectedTotal : 20;
+            document.getElementById('modulesOnline').textContent = onlineCount + '/' + expectedTotal;
             document.getElementById('cellsBalancing').textContent = balancingCount;
             document.getElementById('status').textContent = 'Last update: ' + new Date().toLocaleTimeString();
             document.getElementById('status').className = 'status';
@@ -399,6 +442,31 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             }
         }
 
+        async function updateExpected(bus, cmuId, isChecked) {
+            try {
+                let mask = (bus === 'A') ? expectedMaskA : expectedMaskB;
+                if (isChecked) {
+                    mask |= (1 << (cmuId - 1));
+                } else {
+                    mask &= ~(1 << (cmuId - 1));
+                }
+
+                const formData = new FormData();
+                formData.append(bus === 'A' ? 'expectedCmusA' : 'expectedCmusB', mask);
+
+                const response = await fetch('/api/config', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (response.ok) {
+                    fetchData();
+                }
+            } catch (err) {
+                console.error('Update expected failed:', err);
+            }
+        }
+
         // Initial fetch and auto-refresh every 1 second
         fetchData();
         setInterval(fetchData, 1000);
@@ -422,7 +490,7 @@ static void handleApiBms(AsyncWebServerRequest* request) {
 
 static void handleApiModuleN(AsyncWebServerRequest* request, int moduleNum) {
     if (moduleNum < 1 || moduleNum > BMS_MODULE_COUNT) {
-        request->send(400, "application/json", "{\"error\":\"Invalid module number (1-8)\"}");
+        request->send(400, "application/json", "{\"error\":\"Invalid module number (1-20)\"}");
         return;
     }
 
@@ -448,6 +516,18 @@ static void handleApiBalancing(AsyncWebServerRequest* request) {
     request->send(200, "application/json", json);
 }
 
+static void handleApiConfig(AsyncWebServerRequest* request) {
+    if (request->hasParam("expectedCmusA", true)) {
+        g_bmsSettings.expectedCmusA = request->getParam("expectedCmusA", true)->value().toInt();
+    }
+    if (request->hasParam("expectedCmusB", true)) {
+        g_bmsSettings.expectedCmusB = request->getParam("expectedCmusB", true)->value().toInt();
+    }
+
+    settingsSave();
+    request->send(200, "application/json", "{\"status\":\"ok\"}");
+}
+
 
 static void handleNotFound(AsyncWebServerRequest* request) {
     request->send(404, "application/json", "{\"error\":\"Not found\"}");
@@ -471,9 +551,22 @@ void webServerInit() {
     s_server.on("/api/module/6", HTTP_GET, [](AsyncWebServerRequest* r) { handleApiModuleN(r, 6); });
     s_server.on("/api/module/7", HTTP_GET, [](AsyncWebServerRequest* r) { handleApiModuleN(r, 7); });
     s_server.on("/api/module/8", HTTP_GET, [](AsyncWebServerRequest* r) { handleApiModuleN(r, 8); });
+    s_server.on("/api/module/9", HTTP_GET, [](AsyncWebServerRequest* r) { handleApiModuleN(r, 9); });
+    s_server.on("/api/module/10", HTTP_GET, [](AsyncWebServerRequest* r) { handleApiModuleN(r, 10); });
+    s_server.on("/api/module/11", HTTP_GET, [](AsyncWebServerRequest* r) { handleApiModuleN(r, 11); });
+    s_server.on("/api/module/12", HTTP_GET, [](AsyncWebServerRequest* r) { handleApiModuleN(r, 12); });
+    s_server.on("/api/module/13", HTTP_GET, [](AsyncWebServerRequest* r) { handleApiModuleN(r, 13); });
+    s_server.on("/api/module/14", HTTP_GET, [](AsyncWebServerRequest* r) { handleApiModuleN(r, 14); });
+    s_server.on("/api/module/15", HTTP_GET, [](AsyncWebServerRequest* r) { handleApiModuleN(r, 15); });
+    s_server.on("/api/module/16", HTTP_GET, [](AsyncWebServerRequest* r) { handleApiModuleN(r, 16); });
+    s_server.on("/api/module/17", HTTP_GET, [](AsyncWebServerRequest* r) { handleApiModuleN(r, 17); });
+    s_server.on("/api/module/18", HTTP_GET, [](AsyncWebServerRequest* r) { handleApiModuleN(r, 18); });
+    s_server.on("/api/module/19", HTTP_GET, [](AsyncWebServerRequest* r) { handleApiModuleN(r, 19); });
+    s_server.on("/api/module/20", HTTP_GET, [](AsyncWebServerRequest* r) { handleApiModuleN(r, 20); });
 
     s_server.on("/api/summary", HTTP_GET, handleApiSummary);
     s_server.on("/api/balancing", HTTP_POST, handleApiBalancing);
+    s_server.on("/api/config", HTTP_POST, handleApiConfig);
 
     // 404 handler
     s_server.onNotFound(handleNotFound);
