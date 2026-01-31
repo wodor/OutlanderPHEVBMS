@@ -150,13 +150,14 @@ bool protectionCheck() {
         }
     }
 
-    if (!allCmusOk) {
+    // Apply a startup grace period of 10 seconds before triggering communication faults
+    if (!allCmusOk && millis() > 10000) {
         if (!s_commFault) {
             Serial.println("[PROTECTION] COMMUNICATION FAULT: One or more expected CMUs are offline");
             s_commFault = true;
         }
         allOk = false;
-    } else {
+    } else if (allCmusOk) {
         s_commFault = false;
     }
 

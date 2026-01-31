@@ -347,13 +347,15 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             let html = '';
 
             const renderBus = (busName, modules) => {
-                let hasAnyPresent = modules.some(m => m.present);
-                if (!hasAnyPresent && busName === 'B') return '';
-
                 let busHtml = `<h2 style="grid-column: 1/-1; margin-top: 20px; color: #3b82f6; border-bottom: 2px solid #3b82f6; padding-bottom: 5px;">Bus ${busName}</h2>`;
+                let visibleCount = 0;
                 for (const mod of modules) {
-                    // Only show modules that are present or have cmuId <= 10
-                    if (!mod.present && mod.cmuId > 10) continue;
+                    // Show modules that are present, OR expected, OR first 8 of Bus A
+                    const isExpected = (busName === 'A')
+                        ? (expectedMaskA & (1 << (mod.cmuId - 1)))
+                        : (expectedMaskB & (1 << (mod.cmuId - 1)));
+
+                    if (!mod.present && !isExpected && !(busName === 'A' && mod.cmuId <= 8)) continue;
 
                     if (mod.present) onlineCount++;
 
@@ -362,10 +364,7 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
                     const modMax = validVoltages.length > 0 ? Math.max(...validVoltages) : 0;
                     const modDelta = modMax - modMin;
 
-                    const isExpected = (busName === 'A')
-                        ? (expectedMaskA & (1 << (mod.cmuId - 1)))
-                        : (expectedMaskB & (1 << (mod.cmuId - 1)));
-
+                    visibleCount++;
                     busHtml += `<div class="module ${mod.present ? '' : 'offline'}">`;
                     busHtml += `<div class="module-header">`;
                     busHtml += `<div class="module-controls">`;
@@ -395,7 +394,7 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
                     }
                     busHtml += `</div></div>`;
                 }
-                return busHtml;
+                return visibleCount > 0 ? busHtml : '';
             };
 
             html += renderBus('A', busA);
