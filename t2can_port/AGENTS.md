@@ -98,6 +98,52 @@ Send to ID `0x3C3` every ~400ms:
 - Board definition: Uses T-2Can's custom board from `../../T-2Can/boards`
 - Libraries: Uses T-2Can's libraries from `../../T-2Can/libraries`
 
+### Testing
+The project includes unit tests that run on the `native` platform (x86/Linux):
+
+```bash
+cd t2can_port
+pio test -e native                # Run tests
+pio test -e native -vv            # Run with verbose output
+```
+
+Tests cover:
+- BMS data structures and calculations
+- SOC (State of Charge) calculations
+- Protection system logic
+- Current sensing framework
+- Safety-critical features
+
+### CI/CD Configuration
+
+**GitHub Actions** (`.github/workflows/ci.yml`): Automated testing
+- Runs on: Ubuntu latest
+- Triggers: Pushes to main, all pull requests
+- Steps:
+  1. **Checkout code**
+  2. **Set up Python 3.x**
+  3. **Cache PlatformIO**: Caches `~/.platformio` and `~/.cache/pip` for faster builds
+  4. **Install PlatformIO**: Installs via pip
+  5. **Pre-install dependencies**: 
+     - Installs `native` platform: `pio pkg install --platform native`
+     - Downloads all environment dependencies: `pio pkg install -e native`
+     - This ensures all libraries are cached before running tests
+  6. **Run tests**: Executes `pio test -e native`
+
+**Copilot Setup Steps** (`.github/workflows/copilot-setup-steps.yml`): Pre-configure Copilot's environment
+- Job name: `copilot-setup-steps` (required for Copilot to pick it up)
+- Runs on: Ubuntu latest
+- Triggers: Workflow dispatch, changes to the setup file
+- Purpose: Pre-installs PlatformIO and dependencies before Copilot coding agent starts
+- Steps (same as CI workflow):
+  1. **Checkout code**
+  2. **Set up Python 3.x**
+  3. **Cache PlatformIO**: Caches dependencies for faster agent startup
+  4. **Install PlatformIO**: Installs via pip
+  5. **Pre-install dependencies**: Downloads `native` platform and packages
+
+**Note for Copilot Agents**: The `copilot-setup-steps.yml` workflow runs automatically before you start working, ensuring PlatformIO and all dependencies are pre-installed and cached. This prevents firewall/network issues when you need to run PlatformIO commands, as everything is already available locally. The CI workflow provides the same setup for automated testing.
+
 ### Build Commands
 ```bash
 cd /Users/artwielogorski/prv/t2can/OutlanderPHEVBMS/t2can_port
