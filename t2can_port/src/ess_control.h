@@ -14,6 +14,16 @@
 #include <Arduino.h>
 
 /**
+ * ESS control state machine states
+ */
+enum EssState : uint8_t {
+    ESS_STATE_IDLE = 0,
+    ESS_STATE_PRECHARGE,
+    ESS_STATE_CONTACTOR_ON,
+    ESS_STATE_FAULT
+};
+
+/**
  * Initialize ESS control system
  * Call once during setup() after protectionInit()
  */
@@ -43,3 +53,18 @@ bool essPrechargeReady(unsigned long startMs, unsigned long nowMs);
  * - Safety shutdown on protection faults
  */
 void essTick();
+
+/**
+ * Get current ESS state
+ */
+EssState essGetState();
+
+/**
+ * Get human-readable ESS state name
+ */
+const char* essGetStateName();
+
+/**
+ * Check if main contactor is considered closed
+ */
+bool essIsContactorClosed();

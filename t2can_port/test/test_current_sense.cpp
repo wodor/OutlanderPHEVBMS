@@ -4,11 +4,20 @@
  */
 
 #include <unity.h>
+#include <Arduino.h>
 #include "../src/bms_data.h"
 #include "../src/current_sense.h"
+#include "../src/config.h"
 
 extern BmsState g_bmsState;
 extern BmsSettings g_bmsSettings;
+extern int g_analogReadState[256];
+
+static void resetCurrentSenseTestState() {
+    g_bmsState = BmsState();
+    g_bmsSettings = BmsSettings();
+    memset(g_analogReadState, 0, sizeof(g_analogReadState));
+}
 
 #ifndef UNIT_TEST
 void setUp(void) {
@@ -70,6 +79,49 @@ void test_current_sense_filtering() {
 }
 
 /**
+ * Test analog dual-range uses both input pins and range selection
+ */
+void test_current_sense_dual_range_inputs() {
+    resetCurrentSenseTestState();
+    g_bmsSettings.currentSensorType = 1;
+    g_bmsSettings.offset1 = 0;
+    g_bmsSettings.offset2 = 0;
+    g_bmsSettings.currentDeadband = 0;
+    g_bmsSettings.conversionLow = 1000.0f;
+    g_bmsSettings.conversionHigh = 1000.0f;
+    g_bmsSettings.rangeChangeCurrent = 1000; // mA threshold
+
+    // Low range sees 3.3A, high range sees 1.0A
+    g_analogReadState[PIN_CURRENT_SENSE_LOW] = 4095;
+    g_analogReadState[PIN_CURRENT_SENSE_HIGH] = 1241; // ~1000mV
+
+    currentSenseInit();
+    currentSenseUpdate();
+
+    TEST_ASSERT_EQUAL_INT(2, g_bmsState.currentSensorRange);
+    TEST_ASSERT_FLOAT_WITHIN(0.1f, 1.0f, g_bmsState.currentAmps);
+}
+
+/**
+ * Test analog single-range uses low input pin
+ */
+void test_current_sense_single_range_input() {
+    resetCurrentSenseTestState();
+    g_bmsSettings.currentSensorType = 3;
+    g_bmsSettings.offset1 = 0;
+    g_bmsSettings.currentDeadband = 0;
+    g_bmsSettings.conversionHigh = 1000.0f;
+
+    g_analogReadState[PIN_CURRENT_SENSE_LOW] = 2048; // ~1650mV
+
+    currentSenseInit();
+    currentSenseUpdate();
+
+    TEST_ASSERT_EQUAL_INT(1, g_bmsState.currentSensorRange);
+    TEST_ASSERT_FLOAT_WITHIN(0.2f, 1.65f, g_bmsState.currentAmps);
+}
+
+/**
  * Test currentSenseGetAmps returns filtered value
  */
 void test_current_sense_get_amps() {
@@ -121,6 +173,8 @@ void setup() {
     RUN_TEST(test_current_sense_init);
     RUN_TEST(test_current_sense_no_sensor);
     RUN_TEST(test_current_sense_filtering);
+    RUN_TEST(test_current_sense_dual_range_inputs);
+    RUN_TEST(test_current_sense_single_range_input);
     RUN_TEST(test_current_sense_get_amps);
     RUN_TEST(test_current_sensor_config);
     RUN_TEST(test_current_sensor_settings);

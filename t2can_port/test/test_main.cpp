@@ -45,12 +45,17 @@ void test_comm_fault_no_data();
 void test_current_sense_init();
 void test_current_sense_no_sensor();
 void test_current_sense_filtering();
+void test_current_sense_dual_range_inputs();
+void test_current_sense_single_range_input();
 void test_current_sense_get_amps();
 void test_current_sensor_config();
 void test_current_sensor_settings();
 
 // Test functions from test_ess_control.cpp
 void test_settings_precharge_defaults();
+void test_ess_idle_outputs_and_aux_no_start();
+void test_ess_precharge_outputs_on_ac_present();
+void test_ess_contactor_outputs_on_key_on();
 void test_precharge_completes_time_and_current();
 void test_precharge_not_complete_if_current_high();
 void test_precharge_aborts_on_fault();
@@ -132,12 +137,17 @@ int main(int argc, char **argv) {
     RUN_TEST(test_current_sense_init);
     RUN_TEST(test_current_sense_no_sensor);
     RUN_TEST(test_current_sense_filtering);
+    RUN_TEST(test_current_sense_dual_range_inputs);
+    RUN_TEST(test_current_sense_single_range_input);
     RUN_TEST(test_current_sense_get_amps);
     RUN_TEST(test_current_sensor_config);
     RUN_TEST(test_current_sensor_settings);
 
     // ESS control tests
     RUN_TEST(test_settings_precharge_defaults);
+    RUN_TEST(test_ess_idle_outputs_and_aux_no_start);
+    RUN_TEST(test_ess_precharge_outputs_on_ac_present);
+    RUN_TEST(test_ess_contactor_outputs_on_key_on);
     RUN_TEST(test_precharge_completes_time_and_current);
     RUN_TEST(test_precharge_not_complete_if_current_high);
     RUN_TEST(test_precharge_aborts_on_fault);

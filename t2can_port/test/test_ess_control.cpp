@@ -4,13 +4,32 @@
  */
 
 #include <unity.h>
+#include <Arduino.h>
 #include "../src/bms_data.h"
 #include "../src/protection.h"
 #include "../src/ess_control.h"
+#include "../src/config.h"
 
 extern BmsState g_bmsState;
 extern BmsSettings g_bmsSettings;
 extern unsigned long g_mockMillis;
+extern int g_digitalWriteState[256];
+extern int g_digitalReadState[256];
+
+static void resetEssTestState() {
+    g_bmsState = BmsState();
+    g_bmsSettings = BmsSettings();
+    g_mockMillis = 0;
+    memset(g_digitalWriteState, 0, sizeof(g_digitalWriteState));
+    memset(g_digitalReadState, 0, sizeof(g_digitalReadState));
+
+    // Minimal valid pack data for protection checks
+    g_bmsState.modules[0].present = true;
+    g_bmsState.modules[0].voltages[0] = 3800;
+    g_bmsState.modules[0].temperatures[0] = 25000;
+    g_bmsState.updatePackStatistics();
+    protectionCheck();
+}
 
 /**
  * Test that default settings for precharge are correct
@@ -21,6 +40,75 @@ void test_settings_precharge_defaults() {
     TEST_ASSERT_EQUAL_INT(5000, settings.prechargeTimeMs);
     TEST_ASSERT_EQUAL_INT(1000, settings.prechargeCurrent);
     TEST_ASSERT_EQUAL_INT(50, settings.contactorHoldDuty);
+}
+
+/**
+ * Test inputs: AUX should not start ESS
+ * Test outputs: all OFF in IDLE
+ */
+void test_ess_idle_outputs_and_aux_no_start() {
+    resetEssTestState();
+    g_digitalReadState[PIN_INPUT_AUX] = HIGH;
+    g_digitalReadState[PIN_INPUT_AC_PRESENT] = LOW;
+    g_digitalReadState[PIN_INPUT_KEY_ON] = LOW;
+
+    essInit();
+    essTick();
+
+    TEST_ASSERT_EQUAL_INT(ESS_STATE_IDLE, essGetState());
+    TEST_ASSERT_EQUAL_INT(LOW, g_digitalWriteState[PIN_OUT_CONTACTOR_MAIN]);
+    TEST_ASSERT_EQUAL_INT(LOW, g_digitalWriteState[PIN_OUT_PRECHARGE]);
+    TEST_ASSERT_EQUAL_INT(LOW, g_digitalWriteState[PIN_OUT_CONTACTOR_NEG]);
+    TEST_ASSERT_EQUAL_INT(LOW, g_digitalWriteState[PIN_OUT_CHARGER_EN]);
+    TEST_ASSERT_EQUAL_INT(LOW, g_digitalWriteState[PIN_OUT_DISCHARGE_EN]);
+}
+
+/**
+ * Test input: AC presence starts precharge
+ * Test outputs: precharge + negative contactor ON
+ */
+void test_ess_precharge_outputs_on_ac_present() {
+    resetEssTestState();
+    g_digitalReadState[PIN_INPUT_AC_PRESENT] = HIGH;
+    g_digitalReadState[PIN_INPUT_KEY_ON] = LOW;
+
+    essInit();
+    essTick();  // transition to PRECHARGE
+    essTick();  // apply PRECHARGE outputs
+
+    TEST_ASSERT_EQUAL_INT(ESS_STATE_PRECHARGE, essGetState());
+    TEST_ASSERT_EQUAL_INT(HIGH, g_digitalWriteState[PIN_OUT_PRECHARGE]);
+    TEST_ASSERT_EQUAL_INT(HIGH, g_digitalWriteState[PIN_OUT_CONTACTOR_NEG]);
+    TEST_ASSERT_EQUAL_INT(LOW, g_digitalWriteState[PIN_OUT_CONTACTOR_MAIN]);
+    TEST_ASSERT_EQUAL_INT(LOW, g_digitalWriteState[PIN_OUT_CHARGER_EN]);
+    TEST_ASSERT_EQUAL_INT(LOW, g_digitalWriteState[PIN_OUT_DISCHARGE_EN]);
+}
+
+/**
+ * Test input: KEY_ON starts precharge
+ * Test outputs: contactor ON + charger enabled after precharge completes
+ */
+void test_ess_contactor_outputs_on_key_on() {
+    resetEssTestState();
+    g_bmsSettings.prechargeTimeMs = 1;
+    g_bmsSettings.prechargeCurrent = 10000;
+    g_bmsState.currentAmps = 0.0f;
+
+    g_digitalReadState[PIN_INPUT_AC_PRESENT] = LOW;
+    g_digitalReadState[PIN_INPUT_KEY_ON] = HIGH;
+
+    essInit();
+    essTick();  // transition to PRECHARGE
+    g_mockMillis = 10;
+    essTick();  // transition to CONTACTOR_ON
+    essTick();  // apply CONTACTOR outputs
+
+    TEST_ASSERT_EQUAL_INT(ESS_STATE_CONTACTOR_ON, essGetState());
+    TEST_ASSERT_EQUAL_INT(HIGH, g_digitalWriteState[PIN_OUT_CONTACTOR_MAIN]);
+    TEST_ASSERT_EQUAL_INT(HIGH, g_digitalWriteState[PIN_OUT_CONTACTOR_NEG]);
+    TEST_ASSERT_EQUAL_INT(LOW, g_digitalWriteState[PIN_OUT_PRECHARGE]);
+    TEST_ASSERT_EQUAL_INT(HIGH, g_digitalWriteState[PIN_OUT_CHARGER_EN]);
+    TEST_ASSERT_EQUAL_INT(LOW, g_digitalWriteState[PIN_OUT_DISCHARGE_EN]);
 }
 
 /**
@@ -174,3 +262,26 @@ void test_discharge_permission_integration() {
     canDischarge = protectionCanDischarge();
     TEST_ASSERT_FALSE(canDischarge);
 }
+
+#ifndef UNIT_TEST
+void setup() {
+    delay(2000);
+    UNITY_BEGIN();
+
+    RUN_TEST(test_settings_precharge_defaults);
+    RUN_TEST(test_ess_idle_outputs_and_aux_no_start);
+    RUN_TEST(test_ess_precharge_outputs_on_ac_present);
+    RUN_TEST(test_ess_contactor_outputs_on_key_on);
+    RUN_TEST(test_precharge_completes_time_and_current);
+    RUN_TEST(test_precharge_not_complete_if_current_high);
+    RUN_TEST(test_precharge_aborts_on_fault);
+    RUN_TEST(test_charger_permission_integration);
+    RUN_TEST(test_discharge_permission_integration);
+
+    UNITY_END();
+}
+
+void loop() {
+    // Tests run once in setup()
+}
+#endif
