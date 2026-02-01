@@ -49,6 +49,14 @@ void test_current_sense_get_amps();
 void test_current_sensor_config();
 void test_current_sensor_settings();
 
+// Test functions from test_ess_control.cpp
+void test_settings_precharge_defaults();
+void test_precharge_completes_time_and_current();
+void test_precharge_not_complete_if_current_high();
+void test_precharge_aborts_on_fault();
+void test_charger_permission_integration();
+void test_discharge_permission_integration();
+
 // Test functions from test_safety_critical.cpp
 void test_soc_extreme_current_overflow();
 void test_soc_extreme_discharge_underflow();
@@ -127,6 +135,14 @@ int main(int argc, char **argv) {
     RUN_TEST(test_current_sense_get_amps);
     RUN_TEST(test_current_sensor_config);
     RUN_TEST(test_current_sensor_settings);
+
+    // ESS control tests
+    RUN_TEST(test_settings_precharge_defaults);
+    RUN_TEST(test_precharge_completes_time_and_current);
+    RUN_TEST(test_precharge_not_complete_if_current_high);
+    RUN_TEST(test_precharge_aborts_on_fault);
+    RUN_TEST(test_charger_permission_integration);
+    RUN_TEST(test_discharge_permission_integration);
 
     // Safety critical tests
     RUN_TEST(test_voltage_extreme_values);
