@@ -60,9 +60,9 @@ void essTick() {
             // In a real implementation, ensure precharge relay is OFF
             // and main contactor is OFF
             
-            // For now, we transition to PRECHARGE to begin the sequence
-            // In production, this would be triggered by user command or auto-start
-            // For this implementation, we just log the state
+            // State machine stays in IDLE until explicitly commanded to start precharge
+            // (e.g., via CLI command calling essStartPrecharge() or auto-start logic)
+            // For this basic implementation, we remain in IDLE
             break;
             
         case ESS_PRECHARGE:
@@ -135,7 +135,7 @@ void essTick() {
 // Helper functions for manual ESS state control (not exposed in header yet)
 // These would be called from CLI commands in a full implementation
 
-void essStartPrecharge() {
+static void essStartPrecharge() {
     if (s_essState == ESS_IDLE) {
         Serial.println("[ESS] Starting precharge sequence");
         s_essState = ESS_PRECHARGE;
@@ -146,7 +146,7 @@ void essStartPrecharge() {
     }
 }
 
-void essReset() {
+static void essReset() {
     Serial.println("[ESS] Resetting to IDLE state");
     s_essState = ESS_IDLE;
     s_prechargeStartMs = 0;
