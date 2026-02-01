@@ -38,6 +38,24 @@ constexpr uint8_t PIN_MCP2515_RST  = 9;   // Reset pin - low pulse reboots the c
 constexpr uint8_t PIN_CAN_TX = 7;
 constexpr uint8_t PIN_CAN_RX = 6;
 
+// ESS control I/O (available header pins, avoids CAN + MCP2515 pins)
+// Inputs are active HIGH.
+constexpr uint8_t PIN_INPUT_AC_PRESENT = 39;  // IO39
+constexpr uint8_t PIN_INPUT_KEY_ON     = 41;  // IO41
+constexpr uint8_t PIN_INPUT_AUX        = 42;  // IO42 (optional)
+
+// Outputs are active HIGH.
+constexpr uint8_t PIN_OUT_CONTACTOR_MAIN = 15; // IO15
+constexpr uint8_t PIN_OUT_PRECHARGE      = 16; // IO16
+constexpr uint8_t PIN_OUT_CONTACTOR_NEG  = 17; // IO17
+constexpr uint8_t PIN_OUT_CHARGER_EN     = 18; // IO18
+constexpr uint8_t PIN_OUT_DISCHARGE_EN   = 21; // IO21 (optional)
+
+// Current sensing (analog inputs)
+// Use ADC-capable pins from the header.
+constexpr uint8_t PIN_CURRENT_SENSE_LOW  = 4;  // IO4 (ADC1)
+constexpr uint8_t PIN_CURRENT_SENSE_HIGH = 5;  // IO5 (ADC1)
+
 // =============================================================================
 // BMS CONFIGURATION
 // =============================================================================

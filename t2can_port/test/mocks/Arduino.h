@@ -72,18 +72,28 @@ using std::isnan;
 using std::isinf;
 
 // Analog functions
+extern int g_analogReadState[256];
+extern int g_analogWriteState[256];
 inline void analogReadResolution(int bits) { (void)bits; }
-inline int analogRead(int pin) { (void)pin; return 2048; }  // Mid-scale for 12-bit
-inline void analogWrite(int pin, int value) { (void)pin; (void)value; }
+inline void analogSetPinAttenuation(int pin, int atten) { (void)pin; (void)atten; }
+inline int analogRead(int pin) { return g_analogReadState[pin]; }
+inline void analogWrite(int pin, int value) { g_analogWriteState[pin] = value; }
 
 // Digital functions
-inline void pinMode(int pin, int mode) { (void)pin; (void)mode; }
-inline void digitalWrite(int pin, int value) { (void)pin; (void)value; }
-inline int digitalRead(int pin) { (void)pin; return 0; }
+extern int g_pinModeState[256];
+extern int g_digitalWriteState[256];
+extern int g_digitalReadState[256];
+inline void pinMode(int pin, int mode) { g_pinModeState[pin] = mode; }
+inline void digitalWrite(int pin, int value) { g_digitalWriteState[pin] = value; }
+inline int digitalRead(int pin) { return g_digitalReadState[pin]; }
 
 // Pin modes
 #define INPUT 0
 #define OUTPUT 1
 #define INPUT_PULLUP 2
+#define INPUT_PULLDOWN 3
 #define HIGH 1
 #define LOW 0
+
+// ADC attenuation constant (placeholder for native tests)
+#define ADC_11db 0

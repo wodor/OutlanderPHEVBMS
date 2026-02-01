@@ -33,6 +33,7 @@
 #include "soc_calc.h"
 #include "current_sense.h"
 #include "protection.h"
+#include "ess_control.h"
 
 // =============================================================================
 // TIMING STATE
@@ -62,12 +63,14 @@ static unsigned long s_lastSocUpdateTime = 0;
 static unsigned long s_lastCurrentUpdateTime = 0;
 static unsigned long s_lastProtectionCheckTime = 0;
 static unsigned long s_lastSocSaveTime = 0;
+static unsigned long s_lastEssTickTime = 0;
 
 // Interval constants
 constexpr unsigned long INTERVAL_SOC_UPDATE_MS = 100;        // Update SOC every 100ms
 constexpr unsigned long INTERVAL_CURRENT_UPDATE_MS = 50;     // Read current every 50ms
 constexpr unsigned long INTERVAL_PROTECTION_CHECK_MS = 500;  // Check protection every 500ms
 constexpr unsigned long INTERVAL_SOC_SAVE_MS = 60000;        // Save SOC every 60 seconds
+constexpr unsigned long INTERVAL_ESS_TICK_MS = 500;          // ESS control tick every 500ms
 
 // =============================================================================
 // SETUP
@@ -137,6 +140,9 @@ void setup() {
     
     // Initialize protection system
     protectionInit();
+    
+    // Initialize ESS control (precharge, contactor, charger)
+    essInit();
 
     Serial.println();
     Serial.println("Commands: 'r' = report, 'b' = balancing, 'h' = help");
@@ -203,7 +209,13 @@ void loop() {
         protectionCheck();
     }
 
-    // 9. Periodic task: Save SOC to NVS every 60 seconds
+    // 9. Periodic task: ESS control tick every 500ms
+    if (millis() - s_lastEssTickTime >= INTERVAL_ESS_TICK_MS) {
+        s_lastEssTickTime = millis();
+        essTick();
+    }
+
+    // 10. Periodic task: Save SOC to NVS every 60 seconds
     if (millis() - s_lastSocSaveTime >= INTERVAL_SOC_SAVE_MS) {
         s_lastSocSaveTime = millis();
         if (g_bmsState.socInitialized) {

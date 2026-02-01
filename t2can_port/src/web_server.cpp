@@ -14,6 +14,7 @@
 #include "config.h"
 #include "bms_data.h"
 #include "protection.h"
+#include "ess_control.h"
 #include <ESPAsyncWebServer.h>
 
 // Web server instance on port 80
@@ -135,6 +136,9 @@ static String buildSummaryJson() {
     json += "\"balanceTargetMv\":" + String(g_bmsState.balancingEnabled ? g_bmsState.lowestCellMv : 0) + ",";
     json += "\"cellsBalancing\":" + String(balancingCount) + ",";
     json += "\"protectionStatus\":\"" + String(protectionGetStatus()) + "\",";
+    json += "\"essState\":\"" + String(essGetStateName()) + "\",";
+    json += "\"contactorClosed\":" + String(essIsContactorClosed() ? "true" : "false") + ",";
+    json += "\"chargerEnabled\":" + String(g_bmsState.chargerEnabled ? "true" : "false") + ",";
     json += "\"msSinceCanMsg\":" + String(msSinceCan) + ",";
     json += "\"hasData\":" + String(presentCount > 0 ? "true" : "false") + ",";
     json += "\"expectedTotal\":" + String(expectedCount) + ",";
@@ -174,6 +178,16 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             justify-content: space-around;
             flex-wrap: wrap;
             gap: 15px;
+        }
+        .ess-summary {
+            background: #121b34;
+            padding: 12px 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 18px;
         }
         .summary-item { text-align: center; }
         .summary-value { font-size: 1.8em; font-weight: bold; color: #4ade80; }
@@ -235,6 +249,21 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
 </head>
 <body>
     <h1>Outlander BMS Monitor</h1>
+
+    <div class="ess-summary">
+        <div class="summary-item">
+            <div class="summary-value" id="essState">--</div>
+            <div class="summary-label">ESS State</div>
+        </div>
+        <div class="summary-item">
+            <div class="summary-value" id="contactorState">--</div>
+            <div class="summary-label">Contactor</div>
+        </div>
+        <div class="summary-item">
+            <div class="summary-value" id="chargerState">--</div>
+            <div class="summary-label">Charger</div>
+        </div>
+    </div>
 
     <div class="summary">
         <div class="summary-item">
@@ -335,6 +364,33 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             } else {
                 protEl.style.color = '#ef4444';
             }
+
+            // ESS state and contactor/charger status
+            const essEl = document.getElementById('essState');
+            essEl.textContent = summary.essState;
+            if (summary.essState === 'CONTACTOR_ON') {
+                essEl.style.color = '#4ade80';
+            } else if (summary.essState === 'PRECHARGE') {
+                essEl.style.color = '#f59e0b';
+            } else if (summary.essState === 'FAULT') {
+                essEl.style.color = '#ef4444';
+            } else {
+                essEl.style.color = '#888';
+            }
+
+            const contactorEl = document.getElementById('contactorState');
+            contactorEl.textContent = summary.contactorClosed ? 'ON' : 'OFF';
+            if (summary.contactorClosed) {
+                contactorEl.style.color = '#4ade80';
+            } else if (summary.essState === 'FAULT') {
+                contactorEl.style.color = '#ef4444';
+            } else {
+                contactorEl.style.color = '#6b7280';
+            }
+
+            const chargerEl = document.getElementById('chargerState');
+            chargerEl.textContent = summary.chargerEnabled ? 'ENABLED' : 'DISABLED';
+            chargerEl.style.color = summary.chargerEnabled ? '#4ade80' : '#6b7280';
             
             document.getElementById('balanceBtn').textContent = 'Balancing: ' + (balancingEnabled ? 'ON' : 'OFF');
             document.getElementById('balanceBtn').className = balancingEnabled ? '' : 'off';

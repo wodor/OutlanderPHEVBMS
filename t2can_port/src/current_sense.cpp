@@ -11,17 +11,16 @@
 static float s_filteredCurrent = 0.0f;
 static const float FILTER_ALPHA = 0.1f;  // Simple exponential moving average
 
-// For dual-range analog sensors
-static const int ADC_CHANNEL_1 = 0;  // GPIO pin for analog input 1
-static const int ADC_CHANNEL_2 = 1;  // GPIO pin for analog input 2
-
 void currentSenseInit() {
     // Configure ADC for analog sensors if needed
     if (g_bmsSettings.currentSensorType == 1 || g_bmsSettings.currentSensorType == 3) {
+        pinMode(PIN_CURRENT_SENSE_LOW, INPUT);
+        pinMode(PIN_CURRENT_SENSE_HIGH, INPUT);
         // Set ADC resolution (ESP32 supports 9-12 bits, default is 12)
         analogReadResolution(12);
-        // Set ADC attenuation (allows reading up to 3.3V)
-        // Note: On ESP32-S3, ADC pins are different. We'll use placeholder pins here.
+        // Set ADC attenuation (allows reading up to ~3.3V)
+        analogSetPinAttenuation(PIN_CURRENT_SENSE_LOW, ADC_11db);
+        analogSetPinAttenuation(PIN_CURRENT_SENSE_HIGH, ADC_11db);
         Serial.println("[CURRENT] Analog current sensing initialized");
     }
     
@@ -40,10 +39,8 @@ void currentSenseUpdate() {
             
         case 1: {  // Analog dual-range
             // Read both ADC channels
-            // Note: In a real implementation, you'd use actual GPIO pins
-            // For now, this is placeholder code
-            int adc1 = 2048;  // Placeholder - would be analogRead(ADC_PIN_1)
-            int adc2 = 2048;  // Placeholder - would be analogRead(ADC_PIN_2)
+            int adc1 = analogRead(PIN_CURRENT_SENSE_LOW);
+            int adc2 = analogRead(PIN_CURRENT_SENSE_HIGH);
             
             // Convert ADC readings to mV (assuming 3.3V reference, 12-bit ADC)
             float mv1 = (adc1 / 4095.0f) * 3300.0f;
@@ -95,7 +92,7 @@ void currentSenseUpdate() {
             
         case 3: {  // Analog single-range
             // Read single ADC channel
-            int adc1 = 2048;  // Placeholder
+            int adc1 = analogRead(PIN_CURRENT_SENSE_LOW);
             float mv1 = (adc1 / 4095.0f) * 3300.0f;
             mv1 -= g_bmsSettings.offset1;
             

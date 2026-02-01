@@ -40,6 +40,13 @@ The purpose is to read cell voltages and temperatures from Mitsubishi Outlander 
   - Pack voltage calculation
   - Delta voltage tracking
 
+- **ESS Control** (Energy Storage System):
+  - Safe precharge sequencing (time + current threshold)
+  - Main contactor engagement after precharge completion
+  - Charger control integrated with protection system
+  - ESS-only mode (stationary storage, not vehicle drive)
+  - Automatic safety shutdown on protection faults
+
 - **Enhanced Displays**:
   - Serial console shows SOC, current, pack voltage, temps
   - Web dashboard displays all V2 metrics
@@ -124,6 +131,40 @@ Settings are defined in `src/bms_data.h` in the `BmsSettings` structure. Key par
 - `useVoltageSoc` - Use voltage-based SOC instead of coulomb-counting
 - `socVoltageCurve` - Voltage-to-SOC mapping [lowV_mV, lowSOC%, highV_mV, highSOC%]
 
+### ESS Control (Precharge & Contactor)
+- `prechargeTimeMs` - Minimum precharge duration (default: 5000ms)
+- `prechargeCurrent` - Maximum current threshold for precharge completion (default: 1000mA)
+- `contactorHoldDuty` - PWM duty cycle to hold contactor closed (default: 50%)
+
+## ESS Control
+
+The ESS (Energy Storage System) control module provides safe sequencing for stationary battery storage applications:
+
+### Precharge Sequence
+Precharge is a safety mechanism to gradually charge the DC link capacitors before engaging the main contactor:
+- **Time Requirement**: Precharge relay must be active for at least `prechargeTimeMs` (default: 5 seconds)
+- **Current Requirement**: Pack current must be below `prechargeCurrent` threshold (default: 1000mA = 1A)
+- **Both conditions** must be satisfied before the main contactor engages
+
+### Main Contactor Control
+- Only engages after successful precharge completion
+- Automatically disengages on any protection fault (overvoltage, undervoltage, overtemp, etc.)
+- PWM hold mode reduces coil power consumption after initial engagement
+
+### Charger Control
+- Charger enable/disable is controlled by `protectionCanCharge()`
+- Automatically disables on:
+  - Overvoltage conditions
+  - Overtemperature
+  - Undertemperature (too cold to charge safely)
+- Integrates with existing protection system
+
+### Safety Features
+- ESS-only mode (not for vehicle drive applications)
+- All outputs automatically disabled on protection faults
+- Non-blocking operation integrated with main loop timing
+- Leverages existing CLI menu structure - no menu changes required
+
 ## Project Structure
 
 ```
@@ -138,7 +179,17 @@ t2can_port/
 │   ├── web_server.h/cpp   # Web dashboard
 │   ├── soc_calc.h/cpp     # SOC calculation (V2)
 │   ├── current_sense.h/cpp # Current sensing (V2)
-│   └── protection.h/cpp   # Protection system (V2)
+│   ├── protection.h/cpp   # Protection system (V2)
+│   └── ess_control.h/cpp  # ESS control (precharge, contactor, charger)
+├── test/
+│   ├── test_main.cpp      # Test entry point
+│   ├── test_bms_data.cpp  # BMS data tests
+│   ├── test_soc_calc.cpp  # SOC calculation tests
+│   ├── test_protection.cpp # Protection system tests
+│   ├── test_current_sense.cpp # Current sensing tests
+│   ├── test_ess_control.cpp # ESS control tests
+│   ├── test_safety_critical.cpp # Safety critical tests
+│   └── mocks/             # Mock Arduino/Preferences for native tests
 ├── platformio.ini         # Build configuration
 ├── README.md              # This file
 └── AGENTS.md              # Development notes
