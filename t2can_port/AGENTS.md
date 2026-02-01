@@ -130,7 +130,19 @@ Tests cover:
      - This ensures all libraries are cached before running tests
   6. **Run tests**: Executes `pio test -e native`
 
-**Note for Copilot Agents**: The pre-installation steps ensure that PlatformIO platforms and dependencies are available before test execution. This prevents firewall/network issues when agents need to run PlatformIO commands, as everything is already cached locally.
+**Copilot Setup Steps** (`.github/workflows/copilot-setup-steps.yml`): Pre-configure Copilot's environment
+- Job name: `copilot-setup-steps` (required for Copilot to pick it up)
+- Runs on: Ubuntu latest
+- Triggers: Workflow dispatch, changes to the setup file
+- Purpose: Pre-installs PlatformIO and dependencies before Copilot coding agent starts
+- Steps (same as CI workflow):
+  1. **Checkout code**
+  2. **Set up Python 3.x**
+  3. **Cache PlatformIO**: Caches dependencies for faster agent startup
+  4. **Install PlatformIO**: Installs via pip
+  5. **Pre-install dependencies**: Downloads `native` platform and packages
+
+**Note for Copilot Agents**: The `copilot-setup-steps.yml` workflow runs automatically before you start working, ensuring PlatformIO and all dependencies are pre-installed and cached. This prevents firewall/network issues when you need to run PlatformIO commands, as everything is already available locally. The CI workflow provides the same setup for automated testing.
 
 ### Build Commands
 ```bash
