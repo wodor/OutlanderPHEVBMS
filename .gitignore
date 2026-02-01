@@ -26,3 +26,6 @@ Thumbs.db
 
 # Test artifacts
 /tmp/
+
+# CodeQL artifacts
+_codeql_detected_source_root
