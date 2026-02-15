@@ -59,6 +59,82 @@ The purpose is to read cell voltages and temperatures from Mitsubishi Outlander 
 - **CAN bus connection** to the battery modules
 - **Optional**: Current sensor (analog or CAN-based)
 
+## ESS Wiring (ASCII Diagram)
+
+Logic outputs are **active HIGH** (GPIO HIGH = output ON). Coils must be driven
+through appropriate drivers/relays; GPIOs do not drive 12V directly.
+
+```
+                           +12V (coil supply)
+                              |
+                              +-------------------------------+
+                              |                               |
+                              |                         [Fuse]|
+                              |                               |
+                              |                         +--+  |
+                              |                         |  |  |
+                              |                         +--+  |
+                              |                               |
+                              |                               |
+                           .--+--.                        .---+---.
+                           |Main |                        |Prechg |
+                           |Cont.|                        |Cont.  |
+                           '-----'                        '-------'
+                              |                               |
+                              |                               |
+                          OUT: IO15                       OUT: IO16
+                          (MAIN)                          (PRECHG)
+                              |                               |
+                              +-----------+-------------------+
+                                          |
+                                      HV+ bus
+
+HV- bus
+  |
+  +--> .-------.
+      | Neg   |
+      | Cont. |
+      '-------'
+          |
+      OUT: IO17
+      (NEG)
+
+Charger enable (logic output): IO18 -> charger control input
+Discharge enable (optional):   IO21 -> load enable input
+
+Inputs (active HIGH):
+  IO39 = AC_PRESENT
+  IO41 = KEY_ON
+  IO42 = AUX (optional)
+```
+
+## ESS Control Sequence
+
+```
+Time ---->
+
+Inputs:
+  AC_PRESENT / KEY_ON  ____|‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾|____
+  Protection OK        ‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾
+
+State:
+  IDLE                 [IDLE]--------------------+
+  PRECHARGE                                   [PRECHARGE]----+
+  CONTACTOR_ON                                             [CONTACTOR_ON]
+
+Outputs:
+  NEG Contactor (IO17) ____|‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾
+  Precharge (IO16)     ____|‾‾‾‾‾‾‾‾‾‾|____________________
+  Main Contactor (IO15)____|__________|‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾
+  Charger EN (IO18)    ____|__________|‾‾‾‾‾‾‾‾‾‾‾ (if allowed)
+
+Precharge completes when BOTH are true:
+  - elapsed time >= prechargeTimeMs
+  - |current| <= prechargeCurrent (mA)
+
+If a protection fault occurs, outputs drop and state goes to FAULT.
+```
+
 ## Setup Instructions
 
 ### 1. Install PlatformIO

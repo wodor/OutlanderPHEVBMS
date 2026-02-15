@@ -120,6 +120,16 @@ static String buildSummaryJson() {
         ? (millis() - g_bmsState.lastCanMessageTime)
         : 999999;
 
+    // Read IO states (active HIGH)
+    const bool acPresent = digitalRead(PIN_INPUT_AC_PRESENT) == HIGH;
+    const bool keyOn = digitalRead(PIN_INPUT_KEY_ON) == HIGH;
+    const bool auxIn = digitalRead(PIN_INPUT_AUX) == HIGH;
+    const bool outMain = digitalRead(PIN_OUT_CONTACTOR_MAIN) == HIGH;
+    const bool outPrecharge = digitalRead(PIN_OUT_PRECHARGE) == HIGH;
+    const bool outNeg = digitalRead(PIN_OUT_CONTACTOR_NEG) == HIGH;
+    const bool outCharger = digitalRead(PIN_OUT_CHARGER_EN) == HIGH;
+    const bool outDischarge = digitalRead(PIN_OUT_DISCHARGE_EN) == HIGH;
+
     String json = "{";
     json += "\"modulesPresent\":" + String(presentCount) + ",";
     json += "\"lowestCellMv\":" + String(g_bmsState.lowestCellMv) + ",";
@@ -143,7 +153,22 @@ static String buildSummaryJson() {
     json += "\"hasData\":" + String(presentCount > 0 ? "true" : "false") + ",";
     json += "\"expectedTotal\":" + String(expectedCount) + ",";
     json += "\"expectedCmusA\":" + String(g_bmsSettings.expectedCmusA) + ",";
-    json += "\"expectedCmusB\":" + String(g_bmsSettings.expectedCmusB);
+    json += "\"expectedCmusB\":" + String(g_bmsSettings.expectedCmusB) + ",";
+    json += "\"io\":{";
+    json += "\"inputs\":{";
+    json += "\"acPresent\":" + String(acPresent ? "true" : "false") + ",";
+    json += "\"keyOn\":" + String(keyOn ? "true" : "false") + ",";
+    json += "\"auxIn\":" + String(auxIn ? "true" : "false") + ",";
+    json += "\"curLowAmps\":" + String(g_bmsState.currentSenseLowAmps, 2) + ",";
+    json += "\"curHighAmps\":" + String(g_bmsState.currentSenseHighAmps, 2);
+    json += "},";
+    json += "\"outputs\":{";
+    json += "\"main\":" + String(outMain ? "true" : "false") + ",";
+    json += "\"precharge\":" + String(outPrecharge ? "true" : "false") + ",";
+    json += "\"negContactor\":" + String(outNeg ? "true" : "false") + ",";
+    json += "\"chargerEn\":" + String(outCharger ? "true" : "false") + ",";
+    json += "\"dischargeEn\":" + String(outDischarge ? "true" : "false");
+    json += "}}";
     json += "}";
 
     return json;
@@ -179,6 +204,21 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             flex-wrap: wrap;
             gap: 15px;
         }
+        .io-summary {
+            background: #121b34;
+            padding: 12px 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 18px;
+        }
+        .io-block { background: #0f172a; border-radius: 8px; padding: 12px; }
+        .io-title { font-weight: bold; color: #93c5fd; margin-bottom: 8px; }
+        .io-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+        .io-item { background: #0b1220; border-radius: 6px; padding: 8px; text-align: center; }
+        .io-label { display: block; font-size: 0.75em; color: #94a3b8; margin-bottom: 4px; }
+        .io-value { font-weight: bold; color: #6b7280; }
         .ess-summary {
             background: #121b34;
             padding: 12px 20px;
@@ -265,6 +305,29 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
         </div>
     </div>
 
+    <div class="io-summary">
+        <div class="io-block">
+            <div class="io-title">Inputs</div>
+            <div class="io-grid">
+                <div class="io-item"><span class="io-label">AC_PRESENT</span><span class="io-value" id="ioAcPresent">--</span></div>
+                <div class="io-item"><span class="io-label">KEY_ON</span><span class="io-value" id="ioKeyOn">--</span></div>
+                <div class="io-item"><span class="io-label">AUX_IN</span><span class="io-value" id="ioAuxIn">--</span></div>
+                <div class="io-item"><span class="io-label">CUR_LOW (A)</span><span class="io-value" id="ioCurLow">--</span></div>
+                <div class="io-item"><span class="io-label">CUR_HIGH (A)</span><span class="io-value" id="ioCurHigh">--</span></div>
+            </div>
+        </div>
+        <div class="io-block">
+            <div class="io-title">Outputs</div>
+            <div class="io-grid">
+                <div class="io-item"><span class="io-label">MAIN</span><span class="io-value" id="ioMain">--</span></div>
+                <div class="io-item"><span class="io-label">PRECHG</span><span class="io-value" id="ioPrecharge">--</span></div>
+                <div class="io-item"><span class="io-label">NEG_CONT</span><span class="io-value" id="ioNegCont">--</span></div>
+                <div class="io-item"><span class="io-label">CHG_EN</span><span class="io-value" id="ioChgEn">--</span></div>
+                <div class="io-item"><span class="io-label">DISCHG_EN</span><span class="io-value" id="ioDischgEn">--</span></div>
+            </div>
+        </div>
+    </div>
+
     <div class="summary">
         <div class="summary-item">
             <div class="summary-value" id="canStatus">--</div>
@@ -325,6 +388,25 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
         let lowestCellMv = 5000;
         let expectedMaskA = 0;
         let expectedMaskB = 0;
+
+        function setIoState(id, isHigh) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.textContent = isHigh ? 'HIGH' : 'LOW';
+            el.style.color = isHigh ? '#4ade80' : '#6b7280';
+        }
+
+        function setIoValue(id, value) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            if (value === null || value === undefined) {
+                el.textContent = '--';
+                el.style.color = '#6b7280';
+                return;
+            }
+            el.textContent = value.toFixed(2);
+            el.style.color = '#e2e8f0';
+        }
 
         function updateDashboard(data, summary) {
             lowestCellMv = data.lowestCellMv;
@@ -391,6 +473,20 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             const chargerEl = document.getElementById('chargerState');
             chargerEl.textContent = summary.chargerEnabled ? 'ENABLED' : 'DISABLED';
             chargerEl.style.color = summary.chargerEnabled ? '#4ade80' : '#6b7280';
+
+            const io = summary.io || {};
+            const inputs = io.inputs || {};
+            const outputs = io.outputs || {};
+            setIoState('ioAcPresent', !!inputs.acPresent);
+            setIoState('ioKeyOn', !!inputs.keyOn);
+            setIoState('ioAuxIn', !!inputs.auxIn);
+            setIoValue('ioCurLow', inputs.curLowAmps);
+            setIoValue('ioCurHigh', inputs.curHighAmps);
+            setIoState('ioMain', !!outputs.main);
+            setIoState('ioPrecharge', !!outputs.precharge);
+            setIoState('ioNegCont', !!outputs.negContactor);
+            setIoState('ioChgEn', !!outputs.chargerEn);
+            setIoState('ioDischgEn', !!outputs.dischargeEn);
             
             document.getElementById('balanceBtn').textContent = 'Balancing: ' + (balancingEnabled ? 'ON' : 'OFF');
             document.getElementById('balanceBtn').className = balancingEnabled ? '' : 'off';

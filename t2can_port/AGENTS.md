@@ -42,7 +42,7 @@ Built-in TWAI (CAN-B):
 - Standard CAN (11-bit IDs)
 
 ### Message IDs
-The battery pack has 8 CMUs (Cell Monitoring Units). Each CMU sends 3 message types:
+The battery pack has 10 CMUs (Cell Monitoring Units). Each CMU sends 3 message types:
 
 | CMU | Status (temps) | Voltages 1-4 | Voltages 5-8 |
 |-----|----------------|--------------|--------------|

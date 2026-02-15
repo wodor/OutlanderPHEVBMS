@@ -21,7 +21,7 @@
  */
 
 // Bus A: External MCP2515 CAN controller via SPI
-static MCP2515 s_canA(PIN_MCP2515_CS, 10000000, &SPI);
+static MCP2515 s_canA(PIN_MCP2515_CS);
 
 // Bus B: Internal ESP32-S3 TWAI controller
 static bool s_twaiEnabled = false;

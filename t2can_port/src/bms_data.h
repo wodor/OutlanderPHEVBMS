@@ -183,6 +183,8 @@ struct BmsState {
     // Current sensing
     float   currentAmps;                // Current in amps (+ = charging, - = discharging)
     float   avgCurrentAmps;             // Averaged current
+    float   currentSenseLowAmps;        // Scaled amps from low-range ADC channel
+    float   currentSenseHighAmps;       // Scaled amps from high-range ADC channel
     int     currentSensorRange;         // 0=none, 1=low range, 2=high range
     
     // Charger state
@@ -212,6 +214,8 @@ struct BmsState {
         socInitialized(false),
         currentAmps(0.0f),
         avgCurrentAmps(0.0f),
+        currentSenseLowAmps(0.0f),
+        currentSenseHighAmps(0.0f),
         currentSensorRange(0),
         targetChargeCurrent(0),
         targetDischargeCurrent(0),

@@ -35,6 +35,8 @@ void currentSenseUpdate() {
         case 0:  // No current sensor
             g_bmsState.currentAmps = 0.0f;
             g_bmsState.currentSensorRange = 0;
+            g_bmsState.currentSenseLowAmps = 0.0f;
+            g_bmsState.currentSenseHighAmps = 0.0f;
             break;
             
         case 1: {  // Analog dual-range
@@ -80,6 +82,8 @@ void currentSenseUpdate() {
                 rawCurrent = current2;
                 g_bmsState.currentSensorRange = 2;  // High range
             }
+            g_bmsState.currentSenseLowAmps = current1;
+            g_bmsState.currentSenseHighAmps = current2;
             break;
         }
         
@@ -88,6 +92,8 @@ void currentSenseUpdate() {
             // For now, just use existing value
             rawCurrent = g_bmsState.currentAmps;
             g_bmsState.currentSensorRange = 0;
+            g_bmsState.currentSenseLowAmps = 0.0f;
+            g_bmsState.currentSenseHighAmps = 0.0f;
             break;
             
         case 3: {  // Analog single-range
@@ -106,12 +112,16 @@ void currentSenseUpdate() {
                 rawCurrent = 0.0f;
             }
             g_bmsState.currentSensorRange = 1;
+            g_bmsState.currentSenseLowAmps = rawCurrent;
+            g_bmsState.currentSenseHighAmps = 0.0f;
             break;
         }
         
         default:
             g_bmsState.currentAmps = 0.0f;
             g_bmsState.currentSensorRange = 0;
+            g_bmsState.currentSenseLowAmps = 0.0f;
+            g_bmsState.currentSenseHighAmps = 0.0f;
             return;
     }
     
