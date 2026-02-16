@@ -11,6 +11,8 @@
 
 #include <Arduino.h>
 
+struct can_frame;
+
 /**
  * Initialize the CAN bus hardware
  *
@@ -51,6 +53,20 @@ void canPoll();
  * Call this periodically (every ~400ms) from loop().
  */
 void canSendBalanceCommand();
+
+/**
+ * Send a CAN frame on the specified bus
+ *
+ * @param frame CAN frame to send
+ * @param bus 0 = Bus A (MCP2515), 1 = Bus B (TWAI)
+ * @return true if transmit succeeded, false otherwise
+ */
+bool canSendFrame(const struct can_frame& frame, uint8_t bus);
+
+/**
+ * Check if internal TWAI (Bus B) is enabled
+ */
+bool canIsBusBEnabled();
 
 // =============================================================================
 // DIAGNOSTIC FUNCTIONS

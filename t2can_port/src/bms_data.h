@@ -107,6 +107,10 @@ struct BmsSettings {
     uint16_t expectedCmusA;     // Expected CMUs on Bus A
     uint16_t expectedCmusB;     // Expected CMUs on Bus B
 
+    // CAN bus role configuration
+    bool useBusAForCmu;         // If false, Bus A is free for other protocols (e.g., SIMPBMS)
+    bool simpBmsEnabled;        // Enable SIMPBMS/Victron-style CAN output
+
     // Constructor with defaults
     BmsSettings() :
         overVoltage(4.2f),
@@ -148,7 +152,9 @@ struct BmsSettings {
         prechargeCurrent(1000),
         contactorHoldDuty(50),
         expectedCmusA(0x3FF),   // Default: expect all 10 CMUs on Bus A
-        expectedCmusB(0x3FF)    // Default: expect all 10 CMUs on Bus B (enabled)
+        expectedCmusB(0x3FF),   // Default: expect all 10 CMUs on Bus B (enabled)
+        useBusAForCmu(false),
+        simpBmsEnabled(true)
     {}
 };
 

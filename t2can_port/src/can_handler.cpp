@@ -245,7 +245,9 @@ void canPoll() {
 
     while (s_canA.readMessage(&s_rxFrame) == MCP2515::ERROR_OK) {
         s_canStats.readAttempts++;
-        processFrame(s_rxFrame.can_id, s_rxFrame.can_dlc, s_rxFrame.data, 0);
+        if (g_bmsSettings.useBusAForCmu) {
+            processFrame(s_rxFrame.can_id, s_rxFrame.can_dlc, s_rxFrame.data, 0);
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -276,30 +278,55 @@ void canSendBalanceCommand() {
         s_txFrame.data[2] = 0;  // Balancing disabled
     }
 
-    // Send to Bus A (MCP2515)
-    s_canStats.txAttempts++;
-    if (s_canA.sendMessage(&s_txFrame) == MCP2515::ERROR_OK) {
-        s_canStats.txSuccess++;
+    // Send to Bus A (MCP2515) if it's assigned to CMUs
+    if (g_bmsSettings.useBusAForCmu && g_bmsSettings.expectedCmusA != 0) {
+        canSendFrame(s_txFrame, 0);
     }
 
-    // Send to Bus B (TWAI)
-    if (s_twaiEnabled) {
-        twai_message_t twaiMsg;
-        twaiMsg.identifier = s_txFrame.can_id;
-        twaiMsg.data_length_code = s_txFrame.can_dlc;
-        twaiMsg.flags = TWAI_MSG_FLAG_NONE;
-        memcpy(twaiMsg.data, s_txFrame.data, 8);
-
-        s_canStats.txAttempts++;
-        if (twai_transmit(&twaiMsg, 0) == ESP_OK) {
-            s_canStats.txSuccess++;
-        }
+    // Send to Bus B (TWAI) if enabled and assigned to CMUs
+    if (s_twaiEnabled && g_bmsSettings.expectedCmusB != 0) {
+        canSendFrame(s_txFrame, 1);
     }
 }
 
 // =============================================================================
 // DIAGNOSTIC FUNCTIONS
 // =============================================================================
+
+bool canSendFrame(const struct can_frame& frame, uint8_t bus) {
+    if (bus == 0) {
+        s_canStats.txAttempts++;
+        if (s_canA.sendMessage(&frame) == MCP2515::ERROR_OK) {
+            s_canStats.txSuccess++;
+            return true;
+        }
+        return false;
+    }
+
+    if (bus == 1) {
+        if (!s_twaiEnabled) {
+            return false;
+        }
+
+        twai_message_t twaiMsg;
+        twaiMsg.identifier = frame.can_id;
+        twaiMsg.data_length_code = frame.can_dlc;
+        twaiMsg.flags = TWAI_MSG_FLAG_NONE;
+        memcpy(twaiMsg.data, frame.data, 8);
+
+        s_canStats.txAttempts++;
+        if (twai_transmit(&twaiMsg, 0) == ESP_OK) {
+            s_canStats.txSuccess++;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool canIsBusBEnabled() {
+    return s_twaiEnabled;
+}
 
 CanStats canGetStats() {
     return s_canStats;

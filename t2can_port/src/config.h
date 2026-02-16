@@ -90,7 +90,15 @@ constexpr int TEMPS_PER_MODULE = 3;       // Each CMU has 3 temperature sensors
  */
 
 constexpr uint32_t CAN_BAUD_RATE = 500000;  // 500 kbit/s - standard for automotive
-constexpr uint8_t  CAN_CRYSTAL_MHZ = 8;     // T-2Can's MCP2515 crystal (see AGENTS.md)
+
+// LilyGO T-2Can MCP2515 oscillator is typically 16MHz.
+// Override with build flag if a board variant uses 8MHz:
+//   -D CAN_CRYSTAL_MHZ=8
+#ifndef CAN_CRYSTAL_MHZ
+#define CAN_CRYSTAL_MHZ 16
+#endif
+static_assert((CAN_CRYSTAL_MHZ == 8) || (CAN_CRYSTAL_MHZ == 16),
+              "CAN_CRYSTAL_MHZ must be 8 or 16");
 
 // CAN message IDs used by Outlander BMS
 // Format: 0x0[CMU_number][message_type] where CMU 1-8 = 0x10-0x80

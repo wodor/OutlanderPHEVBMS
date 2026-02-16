@@ -49,12 +49,17 @@ void settingsLoad() {
     // If key doesn't exist, it uses the current value (set by BmsSettings constructor)
     g_bmsSettings.expectedCmusA = (uint16_t)s_prefs.getUInt("cmusA", g_bmsSettings.expectedCmusA);
     g_bmsSettings.expectedCmusB = (uint16_t)s_prefs.getUInt("cmusB", g_bmsSettings.expectedCmusB);
+    g_bmsSettings.useBusAForCmu = s_prefs.getBool("cmuAen", g_bmsSettings.useBusAForCmu);
+    g_bmsSettings.simpBmsEnabled = s_prefs.getBool("simpben", g_bmsSettings.simpBmsEnabled);
 
     s_prefs.end();
 
     Serial.println("[BMS] Settings loaded from NVS");
     Serial.printf("[BMS] Expected CMUs A: 0x%03X, B: 0x%03X\n",
                   g_bmsSettings.expectedCmusA, g_bmsSettings.expectedCmusB);
+    Serial.printf("[BMS] Bus A for CMU: %s, SIMPBMS: %s\n",
+                  g_bmsSettings.useBusAForCmu ? "YES" : "NO",
+                  g_bmsSettings.simpBmsEnabled ? "ENABLED" : "DISABLED");
 }
 
 void settingsSave() {
@@ -62,6 +67,8 @@ void settingsSave() {
 
     s_prefs.putUInt("cmusA", g_bmsSettings.expectedCmusA);
     s_prefs.putUInt("cmusB", g_bmsSettings.expectedCmusB);
+    s_prefs.putBool("cmuAen", g_bmsSettings.useBusAForCmu);
+    s_prefs.putBool("simpben", g_bmsSettings.simpBmsEnabled);
 
     s_prefs.end();
     Serial.println("[BMS] Settings saved to NVS");

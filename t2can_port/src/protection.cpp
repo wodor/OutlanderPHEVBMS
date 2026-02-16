@@ -31,7 +31,7 @@ bool protectionCheck() {
     bool allCmusOk = true;
     for (int m = 0; m < 10; m++) {
         // Bus A
-        if (g_bmsSettings.expectedCmusA & (1 << m)) {
+        if (g_bmsSettings.useBusAForCmu && (g_bmsSettings.expectedCmusA & (1 << m))) {
             if (!g_bmsState.modules[m].present || (millis() - g_bmsState.modules[m].lastSeenTime > 5000)) {
                 allCmusOk = false;
             }

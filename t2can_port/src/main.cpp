@@ -34,6 +34,7 @@
 #include "current_sense.h"
 #include "protection.h"
 #include "ess_control.h"
+#include "simpbms_can.h"
 
 // =============================================================================
 // TIMING STATE
@@ -64,6 +65,7 @@ static unsigned long s_lastCurrentUpdateTime = 0;
 static unsigned long s_lastProtectionCheckTime = 0;
 static unsigned long s_lastSocSaveTime = 0;
 static unsigned long s_lastEssTickTime = 0;
+static unsigned long s_lastSimpBmsSendTime = 0;
 
 // Interval constants
 constexpr unsigned long INTERVAL_SOC_UPDATE_MS = 100;        // Update SOC every 100ms
@@ -71,6 +73,7 @@ constexpr unsigned long INTERVAL_CURRENT_UPDATE_MS = 50;     // Read current eve
 constexpr unsigned long INTERVAL_PROTECTION_CHECK_MS = 500;  // Check protection every 500ms
 constexpr unsigned long INTERVAL_SOC_SAVE_MS = 60000;        // Save SOC every 60 seconds
 constexpr unsigned long INTERVAL_ESS_TICK_MS = 500;          // ESS control tick every 500ms
+constexpr unsigned long INTERVAL_SIMPBMS_SEND_MS = 200;       // SIMPBMS CAN output interval
 
 // =============================================================================
 // SETUP
@@ -143,6 +146,9 @@ void setup() {
     
     // Initialize ESS control (precharge, contactor, charger)
     essInit();
+
+    // Initialize SIMPBMS CAN output
+    simpBmsInit();
 
     Serial.println();
     Serial.println("Commands: 'r' = report, 'b' = balancing, 'h' = help");
@@ -221,6 +227,12 @@ void loop() {
         if (g_bmsState.socInitialized) {
             socSave();
         }
+    }
+
+    // 11. Periodic task: SIMPBMS CAN output
+    if (millis() - s_lastSimpBmsSendTime >= INTERVAL_SIMPBMS_SEND_MS) {
+        s_lastSimpBmsSendTime = millis();
+        simpBmsTick();
     }
 
     /**
