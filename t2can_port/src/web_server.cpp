@@ -7,6 +7,7 @@
  *   GET  /api/module/N  - Single module data (N = 1-8)
  *   GET  /api/summary   - Pack summary (lowest cell, balancing status)
  *   POST /api/balancing - Toggle balancing on/off
+ *   POST /api/reboot    - Schedule a device reboot
  *   GET  /              - HTML dashboard
  */
 
@@ -19,6 +20,9 @@
 
 // Web server instance on port 80
 static AsyncWebServer s_server(80);
+static volatile bool s_rebootPending = false;
+static unsigned long s_rebootRequestedAt = 0;
+static constexpr unsigned long REBOOT_DELAY_MS = 1000;
 
 // =============================================================================
 // JSON BUILDERS
@@ -31,12 +35,16 @@ static String buildModuleJson(int moduleIndex) {
     const CmuData& cmu = g_bmsState.modules[moduleIndex];
     int busIndex = (moduleIndex < 10) ? 0 : 1;
     int cmuId = (moduleIndex % 10) + 1;
+    const long moduleVoltageMv = cmu.getModuleVoltageMv();
 
     String json = "{";
     json += "\"module\":" + String(moduleIndex + 1) + ",";
     json += "\"cmuId\":" + String(cmuId) + ",";
     json += "\"bus\":\"" + String(busIndex == 0 ? "A" : "B") + "\",";
     json += "\"present\":" + String(cmu.present ? "true" : "false") + ",";
+    json += "\"moduleVoltageMv\":";
+    json += moduleVoltageMv > 0 ? String(moduleVoltageMv) : "null";
+    json += ",";
 
     // Voltages array
     json += "\"voltages\":[";
@@ -82,8 +90,11 @@ static String buildFullBmsJson() {
 
     json += "],";
     json += "\"lowestCellMv\":" + String(g_bmsState.lowestCellMv) + ",";
+    json += "\"highestCellMv\":" + String(g_bmsState.highestCellMv) + ",";
+    json += "\"medianCellMv\":" + String(g_bmsState.medianCellMv) + ",";
+    json += "\"cellVoltageDeltaMv\":" + String(g_bmsState.cellVoltageDeltaMv) + ",";
     json += "\"balancingEnabled\":" + String(g_bmsState.balancingEnabled ? "true" : "false") + ",";
-    json += "\"balanceTargetMv\":" + String(g_bmsState.balancingEnabled ? g_bmsState.lowestCellMv : 0);
+    json += "\"balanceTargetMv\":" + String(g_bmsState.balancingEnabled ? g_bmsState.medianCellMv : 0);
     json += "}";
 
     return json;
@@ -134,6 +145,8 @@ static String buildSummaryJson() {
     json += "\"modulesPresent\":" + String(presentCount) + ",";
     json += "\"lowestCellMv\":" + String(g_bmsState.lowestCellMv) + ",";
     json += "\"highestCellMv\":" + String(g_bmsState.highestCellMv) + ",";
+    json += "\"medianCellMv\":" + String(g_bmsState.medianCellMv) + ",";
+    json += "\"cellVoltageDeltaMv\":" + String(g_bmsState.cellVoltageDeltaMv) + ",";
     json += "\"avgCellVoltage\":" + String(g_bmsState.avgCellVoltage, 3) + ",";
     json += "\"packVoltage\":" + String(g_bmsState.packVoltage, 2) + ",";
     json += "\"lowestTemp\":" + String(g_bmsState.lowestTemp, 1) + ",";
@@ -143,7 +156,7 @@ static String buildSummaryJson() {
     json += "\"currentAmps\":" + String(g_bmsState.currentAmps, 2) + ",";
     json += "\"avgCurrentAmps\":" + String(g_bmsState.avgCurrentAmps, 2) + ",";
     json += "\"balancingEnabled\":" + String(g_bmsState.balancingEnabled ? "true" : "false") + ",";
-    json += "\"balanceTargetMv\":" + String(g_bmsState.balancingEnabled ? g_bmsState.lowestCellMv : 0) + ",";
+    json += "\"balanceTargetMv\":" + String(g_bmsState.balancingEnabled ? g_bmsState.medianCellMv : 0) + ",";
     json += "\"cellsBalancing\":" + String(balancingCount) + ",";
     json += "\"protectionStatus\":\"" + String(protectionGetStatus()) + "\",";
     json += "\"essState\":\"" + String(essGetStateName()) + "\",";
@@ -233,6 +246,26 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
         .summary-value { font-size: 1.8em; font-weight: bold; color: #4ade80; }
         .summary-label { font-size: 0.9em; color: #888; }
         .modules { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 15px; }
+        .bus-section { grid-column: 1 / -1; }
+        .bus-summary {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            margin-top: 20px;
+            color: #3b82f6;
+            border-bottom: 2px solid #3b82f6;
+            padding: 8px 4px;
+            font-size: 1.5em;
+            font-weight: bold;
+        }
+        .bus-summary-meta { color: #94a3b8; font-size: 0.55em; font-weight: normal; }
+        .bus-modules {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 15px;
+            padding-top: 15px;
+        }
         .module {
             background: #16213e;
             border-radius: 8px;
@@ -240,17 +273,15 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
         }
         .module.offline { opacity: 0.5; }
         .module-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
+            display: block;
             margin-bottom: 10px;
             border-bottom: 1px solid #333;
             padding-bottom: 8px;
         }
-        .module-controls { display: flex; align-items: center; gap: 8px; }
+        .module-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
         .expected-chk { cursor: pointer; }
         .module-title { font-weight: bold; }
-        .temps { font-size: 0.85em; color: #f59e0b; }
+        .temps { display: block; margin-top: 6px; font-size: 0.85em; color: #f59e0b; }
         .cells { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
         .cell {
             background: #0f3460;
@@ -267,8 +298,12 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
         .cell-delta { font-size: 0.7em; color: #888; display: block; }
         .cell.balancing .cell-delta { color: #333; }
         .module-delta { font-size: 0.8em; color: #f59e0b; margin-left: 10px; }
+        .module-voltage { font-size: 0.9em; color: #4ade80; margin-left: 10px; }
         .controls {
-            text-align: center;
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 12px;
             margin-top: 20px;
         }
         button {
@@ -283,6 +318,9 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
         }
         button:hover { background: #22c55e; }
         button.off { background: #6b7280; color: #fff; }
+        button.danger { background: #dc2626; color: #fff; }
+        button.danger:hover { background: #b91c1c; }
+        button:disabled { cursor: wait; opacity: 0.65; }
         .status { text-align: center; margin-top: 10px; color: #666; font-size: 0.85em; }
         .error { color: #ef4444; }
     </style>
@@ -354,6 +392,10 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             <div class="summary-label">Highest Cell (mV)</div>
         </div>
         <div class="summary-item">
+            <div class="summary-value" id="voltageDelta">--</div>
+            <div class="summary-label">All-Cell Delta (mV)</div>
+        </div>
+        <div class="summary-item">
             <div class="summary-value" id="avgTemp">--</div>
             <div class="summary-label">Avg Temp (°C)</div>
         </div>
@@ -371,7 +413,7 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
         </div>
         <div class="summary-item">
             <div class="summary-value" id="balanceTarget">--</div>
-            <div class="summary-label">Balance Target (mV)</div>
+            <div class="summary-label">Median Balance Target (mV)</div>
         </div>
     </div>
 
@@ -379,6 +421,7 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
 
     <div class="controls">
         <button id="balanceBtn" onclick="toggleBalancing()">Balancing: OFF</button>
+        <button id="rebootBtn" class="danger" onclick="rebootDevice()">Reboot Device</button>
     </div>
 
     <div class="status" id="status">Connecting...</div>
@@ -388,6 +431,12 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
         let lowestCellMv = 5000;
         let expectedMaskA = 0;
         let expectedMaskB = 0;
+        let rebooting = false;
+        const busOpenState = { A: null, B: null };
+
+        function setBusOpen(bus, isOpen) {
+            busOpenState[bus] = isOpen;
+        }
 
         function setIoState(id, isHigh) {
             const el = document.getElementById(id);
@@ -431,6 +480,7 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             const na = 'N/A';
             document.getElementById('lowestCell').textContent = hasData ? data.lowestCellMv : na;
             document.getElementById('highestCell').textContent = hasData ? summary.highestCellMv : na;
+            document.getElementById('voltageDelta').textContent = hasData ? summary.cellVoltageDeltaMv : na;
             document.getElementById('packVoltage').textContent = hasData ? summary.packVoltage : na;
             document.getElementById('soc').textContent = hasData ? (summary.soc + '%') : na;
             document.getElementById('current').textContent = hasData ? summary.avgCurrentAmps : na;
@@ -492,9 +542,9 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             document.getElementById('balanceBtn').className = balancingEnabled ? '' : 'off';
             
             const targetEl = document.getElementById('balanceTarget');
-            if (balancingEnabled && summary.balanceTargetMv > 0 && hasData) {
-                targetEl.textContent = summary.balanceTargetMv;
-                targetEl.style.color = '#4ade80';
+            if (summary.medianCellMv > 0 && hasData) {
+                targetEl.textContent = summary.medianCellMv;
+                targetEl.style.color = balancingEnabled ? '#4ade80' : '#f59e0b';
             } else {
                 targetEl.textContent = '--';
                 targetEl.style.color = '#666';
@@ -510,7 +560,18 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             let html = '';
 
             const renderBus = (busName, modules) => {
-                let busHtml = `<h2 style="grid-column: 1/-1; margin-top: 20px; color: #3b82f6; border-bottom: 2px solid #3b82f6; padding-bottom: 5px;">Bus ${busName}</h2>`;
+                const expectedMask = busName === 'A' ? expectedMaskA : expectedMaskB;
+                const selectedCount = modules.filter(mod => expectedMask & (1 << (mod.cmuId - 1))).length;
+                const presentCount = modules.filter(mod => mod.present).length;
+                const isOpen = busOpenState[busName] === null
+                    ? expectedMask !== 0
+                    : busOpenState[busName];
+                const selectionText = selectedCount > 0
+                    ? `${selectedCount} selected · ${presentCount} online`
+                    : `none selected · expand to configure`;
+                let busHtml = `<details class="bus-section" ${isOpen ? 'open' : ''} ontoggle="setBusOpen('${busName}', this.open)">`;
+                busHtml += `<summary class="bus-summary"><span>Bus ${busName}</span><span class="bus-summary-meta">${selectionText}</span></summary>`;
+                busHtml += `<div class="bus-modules">`;
                 for (const mod of modules) {
                     const isExpected = (busName === 'A')
                         ? (expectedMaskA & (1 << (mod.cmuId - 1)))
@@ -522,12 +583,15 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
                     const modMin = validVoltages.length > 0 ? Math.min(...validVoltages) : 0;
                     const modMax = validVoltages.length > 0 ? Math.max(...validVoltages) : 0;
                     const modDelta = modMax - modMin;
+                    const moduleVoltage = mod.moduleVoltageMv
+                        ? (mod.moduleVoltageMv / 1000).toFixed(3) + 'V'
+                        : '--.---V';
 
                     busHtml += `<div class="module ${mod.present ? '' : 'offline'}">`;
                     busHtml += `<div class="module-header">`;
                     busHtml += `<div class="module-controls">`;
                     busHtml += `<input type="checkbox" class="expected-chk" title="Expected CMU" ${isExpected ? 'checked' : ''} onchange="updateExpected('${busName}', ${mod.cmuId}, this.checked)">`;
-                    busHtml += `<span class="module-title">CMU ${mod.cmuId}<span class="module-delta">Δ${modDelta}mV</span></span>`;
+                    busHtml += `<span class="module-title">CMU ${mod.cmuId}<span class="module-voltage">${moduleVoltage}</span><span class="module-delta">Δ${modDelta}mV</span></span>`;
                     busHtml += `</div>`;
                     busHtml += `<span class="temps">${mod.temperatures.map(t => t.toFixed(1) + '°C').join(' | ')}</span>`;
                     busHtml += `</div>`;
@@ -553,6 +617,7 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
                     }
                     busHtml += `</div></div>`;
                 }
+                busHtml += `</div></details>`;
                 return busHtml;
             };
 
@@ -568,6 +633,7 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
         }
 
         async function fetchData() {
+            if (rebooting) return;
             try {
                 const [bmsRes, summaryRes] = await Promise.all([
                     fetch('/api/bms'),
@@ -594,6 +660,26 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             }
         }
 
+        async function rebootDevice() {
+            if (!window.confirm('Reboot the Outlander BMS device now?')) return;
+
+            rebooting = true;
+            const button = document.getElementById('rebootBtn');
+            const status = document.getElementById('status');
+            button.disabled = true;
+            button.textContent = 'Rebooting...';
+            status.textContent = 'Reboot requested. Waiting for the device to restart...';
+            status.className = 'status';
+
+            try {
+                const response = await fetch('/api/reboot', { method: 'POST' });
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+            } catch (err) {
+                status.textContent = 'Reboot request may have interrupted the connection. Waiting for restart...';
+                status.className = 'status';
+            }
+        }
+
         async function updateExpected(bus, cmuId, isChecked) {
             try {
                 let mask = (bus === 'A') ? expectedMaskA : expectedMaskB;
@@ -602,6 +688,7 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
                 } else {
                     mask &= ~(1 << (cmuId - 1));
                 }
+                if (mask === 0) busOpenState[bus] = false;
 
                 const formData = new FormData();
                 formData.append(bus === 'A' ? 'expectedCmusA' : 'expectedCmusB', mask);
@@ -668,6 +755,16 @@ static void handleApiBalancing(AsyncWebServerRequest* request) {
     request->send(200, "application/json", json);
 }
 
+static void handleApiReboot(AsyncWebServerRequest* request) {
+    if (!s_rebootPending) {
+        s_rebootRequestedAt = millis();
+        s_rebootPending = true;
+        Serial.println("[Web] Device reboot requested");
+    }
+
+    request->send(202, "application/json", "{\"status\":\"restarting\"}");
+}
+
 static void handleApiConfig(AsyncWebServerRequest* request) {
     if (request->hasParam("expectedCmusA", true)) {
         g_bmsSettings.expectedCmusA = request->getParam("expectedCmusA", true)->value().toInt();
@@ -718,6 +815,7 @@ void webServerInit() {
 
     s_server.on("/api/summary", HTTP_GET, handleApiSummary);
     s_server.on("/api/balancing", HTTP_POST, handleApiBalancing);
+    s_server.on("/api/reboot", HTTP_POST, handleApiReboot);
     s_server.on("/api/config", HTTP_POST, handleApiConfig);
 
     // 404 handler
@@ -726,4 +824,14 @@ void webServerInit() {
     // Start server
     s_server.begin();
     Serial.println("[Web] Server started on port 80");
+}
+
+void webServerTick() {
+    if (!s_rebootPending || millis() - s_rebootRequestedAt < REBOOT_DELAY_MS) {
+        return;
+    }
+
+    Serial.println("[Web] Rebooting device now");
+    Serial.flush();
+    ESP.restart();
 }

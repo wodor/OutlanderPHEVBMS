@@ -266,11 +266,16 @@ void canPoll() {
 }
 
 void canSendBalanceCommand() {
-    if (g_bmsState.balancingEnabled) {
-        // Send lowest cell voltage so other cells balance down to match
+    // Refresh the target immediately before sending. Using the median means
+    // approximately the upper half of valid cells are above the discharge target.
+    g_bmsState.updatePackStatistics();
+    const long balanceTargetMv = g_bmsState.medianCellMv;
+
+    if (g_bmsState.balancingEnabled &&
+        balanceTargetMv >= 1500 && balanceTargetMv <= 4500) {
         // highByte/lowByte split a 16-bit value into two bytes
-        s_txFrame.data[0] = highByte(g_bmsState.lowestCellMv);
-        s_txFrame.data[1] = lowByte(g_bmsState.lowestCellMv);
+        s_txFrame.data[0] = highByte(balanceTargetMv);
+        s_txFrame.data[1] = lowByte(balanceTargetMv);
         s_txFrame.data[2] = 1;  // Balancing enabled flag
     } else {
         s_txFrame.data[0] = 0;

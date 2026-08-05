@@ -13,6 +13,7 @@ static bool s_overTempFault = false;
 static bool s_underTempFault = false;
 static bool s_cellImbalanceFault = false;
 static bool s_commFault = false;
+static bool s_underVoltageProtectionEnabled = true;
 
 // Fault latch times (for debouncing)
 static unsigned long s_underVoltTime = 0;
@@ -20,6 +21,7 @@ static unsigned long s_overVoltTime = 0;
 static const unsigned long FAULT_DEBOUNCE_MS = 1000;  // 1 second debounce
 
 void protectionInit() {
+    s_underVoltageProtectionEnabled = true;
     protectionClearFaults();
     Serial.println("[PROTECTION] System initialized");
 }
@@ -103,24 +105,29 @@ bool protectionCheck() {
         s_overVoltFault = false;
     }
     
-    // Check undervoltage (with debounce to avoid spurious trips during high discharge)
-    if (lowCellV < g_bmsSettings.underVoltage) {
-        if (s_underVoltTime == 0) {
-            s_underVoltTime = millis();
-        } else {
-            // SAFETY: Handle millis() rollover in debounce calculation
-            unsigned long elapsed = millis() - s_underVoltTime;
-            if (elapsed > FAULT_DEBOUNCE_MS) {
-                if (!s_underVoltFault) {
-                    s_underVoltFault = true;
-                    Serial.printf("[PROTECTION] UNDERVOLTAGE FAULT: %.3fV < %.3fV\n", 
-                                 lowCellV, g_bmsSettings.underVoltage);
+    if (s_underVoltageProtectionEnabled) {
+        // Check undervoltage (with debounce to avoid spurious trips during high discharge)
+        if (lowCellV < g_bmsSettings.underVoltage) {
+            if (s_underVoltTime == 0) {
+                s_underVoltTime = millis();
+            } else {
+                // SAFETY: Handle millis() rollover in debounce calculation
+                unsigned long elapsed = millis() - s_underVoltTime;
+                if (elapsed > FAULT_DEBOUNCE_MS) {
+                    if (!s_underVoltFault) {
+                        s_underVoltFault = true;
+                        Serial.printf("[PROTECTION] UNDERVOLTAGE FAULT: %.3fV < %.3fV\n",
+                                     lowCellV, g_bmsSettings.underVoltage);
+                    }
+                    allOk = false;
                 }
-                allOk = false;
             }
+        } else if (lowCellV > (g_bmsSettings.underVoltage + g_bmsSettings.dischargeHysteresis)) {
+            // Clear with hysteresis
+            s_underVoltFault = false;
+            s_underVoltTime = 0;
         }
-    } else if (lowCellV > (g_bmsSettings.underVoltage + g_bmsSettings.dischargeHysteresis)) {
-        // Clear with hysteresis
+    } else {
         s_underVoltFault = false;
         s_underVoltTime = 0;
     }
@@ -210,17 +217,32 @@ bool protectionCanDischarge() {
     // - Undervoltage fault
     // - Over temperature
     
-    if (s_underVoltFault) return false;
+    if (s_underVoltageProtectionEnabled && s_underVoltFault) return false;
     if (s_overTempFault) return false;
     
     float lowCellV = g_bmsState.lowestCellMv / 1000.0f;
     
     // Check if voltage is below discharge voltage limit
-    if (lowCellV < g_bmsSettings.dischargeVoltage) {
+    if (s_underVoltageProtectionEnabled && lowCellV < g_bmsSettings.dischargeVoltage) {
         return false;  // Too low to discharge
     }
     
     return true;
+}
+
+void protectionSetUndervoltageEnabled(bool enabled) {
+    s_underVoltageProtectionEnabled = enabled;
+    if (!enabled) {
+        s_underVoltFault = false;
+        s_underVoltTime = 0;
+    }
+
+    Serial.print("[PROTECTION] Undervoltage protection: ");
+    Serial.println(enabled ? "ON" : "OFF");
+}
+
+bool protectionIsUndervoltageEnabled() {
+    return s_underVoltageProtectionEnabled;
 }
 
 void protectionClearFaults() {

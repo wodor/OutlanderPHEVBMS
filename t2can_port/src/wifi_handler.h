@@ -21,6 +21,12 @@ void wifiInit();
 void wifiPoll();
 
 /**
+ * Service Arduino OTA requests.
+ * Call on every main-loop iteration so uploads remain responsive.
+ */
+void wifiHandleOta();
+
+/**
  * Check if WiFi is connected.
  * @return true if connected with valid IP
  */

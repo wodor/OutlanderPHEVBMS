@@ -16,6 +16,8 @@ void test_pack_statistics_temperatures();
 void test_pack_statistics_invalid_temps();
 void test_pack_statistics_no_modules();
 void test_pack_statistics_zero_voltages();
+void test_pack_statistics_odd_median();
+void test_module_voltage_requires_all_cells();
 void test_has_any_data();
 void test_get_pack_voltage_parallel_strings();
 void test_settings_defaults();
@@ -32,6 +34,7 @@ void test_soc_no_data_defaults_to_zero();
 // Test functions from test_protection.cpp
 void test_overvoltage_detection();
 void test_undervoltage_detection();
+void test_undervoltage_disable_toggle();
 void test_overtemperature_detection();
 void test_undertemperature_detection();
 void test_cell_imbalance_detection();
@@ -108,6 +111,8 @@ int main(int argc, char **argv) {
     RUN_TEST(test_pack_statistics_invalid_temps);
     RUN_TEST(test_pack_statistics_no_modules);
     RUN_TEST(test_pack_statistics_zero_voltages);
+    RUN_TEST(test_pack_statistics_odd_median);
+    RUN_TEST(test_module_voltage_requires_all_cells);
     RUN_TEST(test_has_any_data);
     RUN_TEST(test_get_pack_voltage_parallel_strings);
     RUN_TEST(test_settings_defaults);
@@ -124,6 +129,7 @@ int main(int argc, char **argv) {
     // Protection tests
     RUN_TEST(test_overvoltage_detection);
     RUN_TEST(test_undervoltage_detection);
+    RUN_TEST(test_undervoltage_disable_toggle);
     RUN_TEST(test_overtemperature_detection);
     RUN_TEST(test_undertemperature_detection);
     RUN_TEST(test_cell_imbalance_detection);

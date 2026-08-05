@@ -175,6 +175,12 @@ void loop() {
     // 1. Process serial input (user commands)
     serialProcessInput();
 
+    // Process deferred web actions, including an acknowledged reboot request.
+    webServerTick();
+
+    // Service authenticated OTA uploads on every loop iteration.
+    wifiHandleOta();
+
     // 2. Process incoming CAN messages
     //    This reads all available messages and updates g_bmsState
     canPoll();

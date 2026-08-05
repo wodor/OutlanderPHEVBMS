@@ -37,6 +37,11 @@ static void handleCommand(char cmd) {
             Serial.println(g_bmsState.debugMode ? "ON (showing raw CAN frames)" : "OFF");
             break;
 
+        case 'v':  // Toggle undervoltage protection
+            Serial.println();
+            protectionSetUndervoltageEnabled(!protectionIsUndervoltageEnabled());
+            break;
+
         case 'r':  // Show full report
             printFullReport();
             break;
@@ -97,6 +102,7 @@ static void handleCommand(char cmd) {
             Serial.println("  A - Set Bus A expected CMUs mask (hex)");
             Serial.println("  B - Set Bus B expected CMUs mask (hex)");
             Serial.println("  d - Toggle debug mode (show raw CAN)");
+            Serial.println("  v - Toggle undervoltage protection");
             Serial.println("  r - Show full report");
             Serial.println("  R - Reset SOC to 100%");
             Serial.println("  s - Show detailed statistics");
@@ -185,6 +191,10 @@ static void printFullReport() {
                   g_bmsState.balancingEnabled ? "ON" : "OFF",
                   balancingCount,
                   protectionGetStatus());
+    Serial.printf("║  UV protection: %-3s  Limits: fault < %.2fV, discharge < %.2fV              ║\n",
+                  protectionIsUndervoltageEnabled() ? "ON" : "OFF",
+                  g_bmsSettings.underVoltage,
+                  g_bmsSettings.dischargeVoltage);
     Serial.println("╠═══════════════════════════════════════════════════════════════════════════╣");
     Serial.println("║  MODULES                                                                  ║");
 

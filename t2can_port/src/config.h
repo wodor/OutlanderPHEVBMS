@@ -156,4 +156,14 @@ constexpr long DEFAULT_LOW_CELL_MV = 5000;  // Initial "lowest cell" value (impo
     #endif
 #endif
 
+// OTA defaults. A separate OTA_PASSWORD can be supplied in .config.h; when it
+// is omitted, the existing private WiFi password is reused for OTA authentication.
+#ifndef OTA_HOSTNAME
+#define OTA_HOSTNAME "outlander-bms"
+#endif
+
+#ifndef OTA_PASSWORD
+#define OTA_PASSWORD WIFI_PASSWORD
+#endif
+
 constexpr unsigned long INTERVAL_WIFI_POLL_MS = 1000;  // Check WiFi state every 1s

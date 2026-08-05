@@ -15,3 +15,11 @@
  * Call after WiFi initialization.
  */
 void webServerInit();
+
+/**
+ * Process deferred web-server actions from the Arduino main loop.
+ *
+ * The reboot endpoint schedules a restart instead of restarting inside the
+ * asynchronous request callback, allowing the HTTP response to reach the UI.
+ */
+void webServerTick();

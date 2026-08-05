@@ -47,6 +47,17 @@ bool protectionCanCharge();
 bool protectionCanDischarge();
 
 /**
+ * Enable or disable undervoltage protection at runtime.
+ * Disabling also clears any currently latched undervoltage fault.
+ */
+void protectionSetUndervoltageEnabled(bool enabled);
+
+/**
+ * Check whether undervoltage protection is currently enabled.
+ */
+bool protectionIsUndervoltageEnabled();
+
+/**
  * Clear any latched faults
  */
 void protectionClearFaults();

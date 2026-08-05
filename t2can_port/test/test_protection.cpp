@@ -71,6 +71,36 @@ void test_undervoltage_detection() {
 }
 
 /**
+ * Test undervoltage protection can be disabled at runtime
+ */
+void test_undervoltage_disable_toggle() {
+    extern unsigned long g_mockMillis;
+
+    g_bmsSettings.underVoltage = 3.0f;
+    g_bmsSettings.dischargeVoltage = 3.2f;
+    g_bmsState.modules[0].present = true;
+    g_bmsState.modules[0].voltages[0] = 2900; // 2.9V - under both limits
+
+    g_mockMillis = 1;
+    protectionCheck();
+    delay(1100);
+    bool result = protectionCheck();
+    TEST_ASSERT_FALSE(result);
+    TEST_ASSERT_EQUAL_STRING("UNDERVOLTAGE", protectionGetStatus());
+    TEST_ASSERT_FALSE(protectionCanDischarge());
+
+    protectionSetUndervoltageEnabled(false);
+
+    result = protectionCheck();
+    TEST_ASSERT_TRUE(result);
+    TEST_ASSERT_EQUAL_STRING("OK", protectionGetStatus());
+    TEST_ASSERT_TRUE(protectionCanDischarge());
+
+    protectionSetUndervoltageEnabled(true);
+    TEST_ASSERT_TRUE(protectionIsUndervoltageEnabled());
+}
+
+/**
  * Test overtemperature detection
  */
 void test_overtemperature_detection() {
@@ -251,6 +281,7 @@ void setup() {
 
     RUN_TEST(test_overvoltage_detection);
     RUN_TEST(test_undervoltage_detection);
+    RUN_TEST(test_undervoltage_disable_toggle);
     RUN_TEST(test_overtemperature_detection);
     RUN_TEST(test_undertemperature_detection);
     RUN_TEST(test_cell_imbalance_detection);

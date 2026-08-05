@@ -8,6 +8,8 @@
 
 #include "wifi_handler.h"
 #include "config.h"
+#include "bms_data.h"
+#include <ArduinoOTA.h>
 #include <WiFi.h>
 
 // =============================================================================
@@ -24,6 +26,44 @@ static WifiState s_wifiState = WifiState::DISCONNECTED;
 static unsigned long s_lastAttemptTime = 0;
 static unsigned long s_reconnectDelay = 1000;  // Start with 1 second
 static const unsigned long MAX_RECONNECT_DELAY = 30000;  // Cap at 30 seconds
+static bool s_otaStarted = false;
+
+static void startOtaIfNeeded() {
+    if (s_otaStarted || WiFi.status() != WL_CONNECTED) {
+        return;
+    }
+
+    ArduinoOTA.setHostname(OTA_HOSTNAME);
+    if (OTA_PASSWORD[0] != '\0') {
+        ArduinoOTA.setPassword(OTA_PASSWORD);
+    }
+
+    ArduinoOTA.onStart([]() {
+        // Stop requesting cell discharge while flash contents are changing.
+        g_bmsState.balancingEnabled = false;
+        Serial.println("[OTA] Update started; balancing disabled");
+    });
+    ArduinoOTA.onEnd([]() {
+        Serial.println("\n[OTA] Update complete; rebooting");
+    });
+    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+        const unsigned int percent = total > 0 ? (progress * 100U) / total : 0;
+        static unsigned int lastPercent = 101;
+        if (percent != lastPercent && percent % 10U == 0U) {
+            Serial.printf("[OTA] Progress: %u%%\n", percent);
+            lastPercent = percent;
+        }
+    });
+    ArduinoOTA.onError([](ota_error_t error) {
+        Serial.printf("[OTA] Error %u\n", static_cast<unsigned int>(error));
+    });
+    ArduinoOTA.begin();
+    s_otaStarted = true;
+
+    Serial.print("[OTA] Ready as ");
+    Serial.print(OTA_HOSTNAME);
+    Serial.println(".local");
+}
 
 // =============================================================================
 // PUBLIC FUNCTIONS
@@ -31,6 +71,7 @@ static const unsigned long MAX_RECONNECT_DELAY = 30000;  // Cap at 30 seconds
 
 void wifiInit() {
     WiFi.mode(WIFI_STA);
+    WiFi.setHostname(OTA_HOSTNAME);
     WiFi.setAutoReconnect(false);  // We handle reconnection ourselves
 
     Serial.print("[WiFi] Connecting to ");
@@ -55,6 +96,7 @@ void wifiInit() {
         Serial.println("[WiFi] Connected!");
         Serial.print("[WiFi] IP Address: ");
         Serial.println(WiFi.localIP());
+        startOtaIfNeeded();
     } else {
         s_wifiState = WifiState::DISCONNECTED;
         Serial.println("[WiFi] Connection failed - will retry in background");
@@ -85,6 +127,7 @@ void wifiPoll() {
                 s_reconnectDelay = 1000;  // Reset backoff on success
                 Serial.print("[WiFi] Connected! IP: ");
                 Serial.println(WiFi.localIP());
+                startOtaIfNeeded();
             } else if (status == WL_CONNECT_FAILED ||
                        status == WL_NO_SSID_AVAIL ||
                        (millis() - s_lastAttemptTime > 20000)) {  // 20s timeout
@@ -97,12 +140,22 @@ void wifiPoll() {
 
         case WifiState::CONNECTED: {
             if (WiFi.status() != WL_CONNECTED) {
+                if (s_otaStarted) {
+                    ArduinoOTA.end();
+                    s_otaStarted = false;
+                }
                 s_wifiState = WifiState::DISCONNECTED;
                 s_lastAttemptTime = millis();
                 Serial.println("[WiFi] Connection lost!");
             }
             break;
         }
+    }
+}
+
+void wifiHandleOta() {
+    if (s_otaStarted && WiFi.status() == WL_CONNECTED) {
+        ArduinoOTA.handle();
     }
 }
 

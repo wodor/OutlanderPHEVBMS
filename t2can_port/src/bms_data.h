@@ -40,6 +40,20 @@ struct CmuData {
         memset(voltages, 0, sizeof(voltages));
         memset(temperatures, 0, sizeof(temperatures));
     }
+
+    /**
+     * Return the complete eight-cell module voltage in millivolts.
+     * A partial total is misleading, so return 0 until all eight cells are valid.
+     */
+    long getModuleVoltageMv() const {
+        long totalMv = 0;
+        for (int c = 0; c < CELLS_PER_MODULE; c++) {
+            const long voltageMv = voltages[c];
+            if (voltageMv < 1500 || voltageMv > 4500) return 0;
+            totalMv += voltageMv;
+        }
+        return totalMv;
+    }
 };
 
 /**
@@ -173,6 +187,8 @@ struct BmsState {
     // Basic measurements
     long    lowestCellMv;               // Lowest cell voltage across entire pack
     long    highestCellMv;              // Highest cell voltage across entire pack
+    long    medianCellMv;               // Median valid cell voltage, used as balance target
+    long    cellVoltageDeltaMv;         // Highest minus lowest valid cell voltage
     float   packVoltage;                // Total pack voltage in volts
     float   avgCellVoltage;             // Average cell voltage in volts
     
@@ -210,6 +226,8 @@ struct BmsState {
     BmsState() : 
         lowestCellMv(DEFAULT_LOW_CELL_MV), 
         highestCellMv(0),
+        medianCellMv(0),
+        cellVoltageDeltaMv(0),
         packVoltage(0.0f),
         avgCellVoltage(0.0f),
         lowestTemp(999.0f),
@@ -240,13 +258,18 @@ struct BmsState {
     void updatePackStatistics() {
         lowestCellMv = DEFAULT_LOW_CELL_MV;
         highestCellMv = 0;
+        medianCellMv = 0;
+        cellVoltageDeltaMv = 0;
         packVoltage = 0.0f;
+        avgCellVoltage = 0.0f;
         lowestTemp = 999.0f;
         highestTemp = -999.0f;
+        avgTemp = 0.0f;
         
         int cellCount = 0;
         int tempCount = 0;
         float tempSum = 0.0f;
+        long validCellVoltages[BMS_MODULE_COUNT * CELLS_PER_MODULE];
 
         for (int m = 0; m < BMS_MODULE_COUNT; m++) {
             if (!modules[m].present) continue;
@@ -260,6 +283,7 @@ struct BmsState {
                     if (v < lowestCellMv) lowestCellMv = v;
                     if (v > highestCellMv) highestCellMv = v;
                     packVoltage += v / 1000.0f;  // Convert mV to V
+                    validCellVoltages[cellCount] = v;
                     cellCount++;
                 }
             }
@@ -280,6 +304,27 @@ struct BmsState {
         // Calculate averages
         if (cellCount > 0) {
             avgCellVoltage = (packVoltage / cellCount);
+            cellVoltageDeltaMv = highestCellMv - lowestCellMv;
+
+            // The pack is small (maximum 160 cells), so an in-place insertion
+            // sort avoids dynamic allocation while producing a deterministic median.
+            for (int i = 1; i < cellCount; i++) {
+                const long value = validCellVoltages[i];
+                int j = i - 1;
+                while (j >= 0 && validCellVoltages[j] > value) {
+                    validCellVoltages[j + 1] = validCellVoltages[j];
+                    j--;
+                }
+                validCellVoltages[j + 1] = value;
+            }
+
+            if ((cellCount & 1) == 0) {
+                const long lowerMiddle = validCellVoltages[(cellCount / 2) - 1];
+                const long upperMiddle = validCellVoltages[cellCount / 2];
+                medianCellMv = (lowerMiddle + upperMiddle) / 2;
+            } else {
+                medianCellMv = validCellVoltages[cellCount / 2];
+            }
         }
         if (tempCount > 0) {
             avgTemp = tempSum / tempCount;

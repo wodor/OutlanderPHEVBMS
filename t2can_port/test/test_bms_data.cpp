@@ -47,6 +47,8 @@ void test_pack_statistics_voltages() {
     // Verify lowest and highest
     TEST_ASSERT_EQUAL_INT32(3550, g_bmsState.lowestCellMv);
     TEST_ASSERT_EQUAL_INT32(3800, g_bmsState.highestCellMv);
+    TEST_ASSERT_EQUAL_INT32(3662, g_bmsState.medianCellMv);
+    TEST_ASSERT_EQUAL_INT32(250, g_bmsState.cellVoltageDeltaMv);
     
     // Verify pack voltage (sum of all valid cells)
     float expectedPackVoltage = (3600 + 3700 + 3650 + 3550 + 3800 + 3675) / 1000.0f;
@@ -111,6 +113,8 @@ void test_pack_statistics_no_modules() {
     // Should have default/initial values
     TEST_ASSERT_EQUAL_INT32(DEFAULT_LOW_CELL_MV, g_bmsState.lowestCellMv);
     TEST_ASSERT_EQUAL_INT32(0, g_bmsState.highestCellMv);
+    TEST_ASSERT_EQUAL_INT32(0, g_bmsState.medianCellMv);
+    TEST_ASSERT_EQUAL_INT32(0, g_bmsState.cellVoltageDeltaMv);
     TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.0f, g_bmsState.packVoltage);
 }
 
@@ -128,10 +132,45 @@ void test_pack_statistics_zero_voltages() {
     // Should only count valid voltages
     TEST_ASSERT_EQUAL_INT32(3600, g_bmsState.lowestCellMv);
     TEST_ASSERT_EQUAL_INT32(3650, g_bmsState.highestCellMv);
+    TEST_ASSERT_EQUAL_INT32(3625, g_bmsState.medianCellMv);
+    TEST_ASSERT_EQUAL_INT32(50, g_bmsState.cellVoltageDeltaMv);
     
     // Pack voltage should be sum of valid cells only
     float expectedPackVoltage = (3600 + 3650) / 1000.0f;
     TEST_ASSERT_FLOAT_WITHIN(0.01f, expectedPackVoltage, g_bmsState.packVoltage);
+}
+
+/**
+ * Test median calculation with an odd number of valid cells.
+ */
+void test_pack_statistics_odd_median() {
+    g_bmsState.modules[0].present = true;
+    const long voltages[] = {4100, 3500, 3900, 3700, 3600};
+    for (int i = 0; i < 5; i++) {
+        g_bmsState.modules[0].voltages[i] = voltages[i];
+    }
+
+    g_bmsState.updatePackStatistics();
+
+    TEST_ASSERT_EQUAL_INT32(3700, g_bmsState.medianCellMv);
+    TEST_ASSERT_EQUAL_INT32(600, g_bmsState.cellVoltageDeltaMv);
+}
+
+/**
+ * A module voltage is valid only when all eight constituent cells are valid.
+ */
+void test_module_voltage_requires_all_cells() {
+    CmuData cmu;
+    long expectedTotalMv = 0;
+    for (int c = 0; c < CELLS_PER_MODULE; c++) {
+        cmu.voltages[c] = 3900 + c;
+        expectedTotalMv += cmu.voltages[c];
+    }
+
+    TEST_ASSERT_EQUAL_INT32(expectedTotalMv, cmu.getModuleVoltageMv());
+
+    cmu.voltages[4] = 0;
+    TEST_ASSERT_EQUAL_INT32(0, cmu.getModuleVoltageMv());
 }
 
 /**

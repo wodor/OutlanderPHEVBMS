@@ -81,7 +81,7 @@ The battery pack has 10 CMUs (Cell Monitoring Units). Each CMU sends 3 message t
 ### Balance Command (TX)
 Send to ID `0x3C3` every ~400ms:
 ```
-[0]: Target voltage high byte (lowest cell mV)
+[0]: Target voltage high byte (median valid cell mV)
 [1]: Target voltage low byte
 [2]: Enable flag (1 = balance, 0 = off)
 [3]: 4 (fixed)
@@ -254,7 +254,9 @@ Each protection has hysteresis to prevent oscillation. Status reported via:
 
 Tracks across all modules:
 - Lowest/highest/average cell voltages
+- Median cell voltage used as the balancing target
 - Total pack voltage
+- Complete eight-cell voltage for each CMU module
 - Lowest/highest/average temperatures
 - Cell voltage delta (imbalance)
 
@@ -296,8 +298,17 @@ Updated periodically and displayed in serial and web interfaces.
 - Commands: balance toggle, SOC reset, detailed view
 
 **Web Dashboard** (`src/web_server.cpp`): Real-time monitoring
-- 10 summary metrics (SOC, voltage, current, temps, protection)
+- Summary metrics including pack-wide cell delta and median balancing target
 - Color-coded cell display
+- Complete per-module voltage totals
+- Collapsible empty Bus A and Bus B sections
+- Confirmed device reboot control using a deferred main-loop restart
 - Module temperatures
 - Auto-refresh every 1 second
 - API endpoints for programmatic access
+
+**OTA Updates** (`src/wifi_handler.cpp`, `scripts/ota_upload.py`):
+- Arduino OTA is serviced on every main-loop iteration after WiFi connects
+- Hostname defaults to `outlander-bms.local`
+- `outlander_bms_ota` uploads to `192.168.2.90` by default
+- OTA authentication comes from ignored `.config.h`; never commit credentials

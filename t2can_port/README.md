@@ -11,7 +11,7 @@ The purpose is to read cell voltages and temperatures from Mitsubishi Outlander 
 - **CAN Bus Communication**: Reads data from up to 8 Outlander PHEV CMU (Cell Monitoring Units)
 - **Cell Voltage Monitoring**: Tracks all 64 cells (8 cells per CMU × 8 CMUs)
 - **Temperature Monitoring**: 3 temperature sensors per CMU
-- **Cell Balancing Control**: Can enable/disable cell balancing
+- **Cell Balancing Control**: Uses the median valid cell voltage so approximately the highest half of cells discharge
 - **Web Dashboard**: Real-time monitoring via WiFi
 - **Serial Console**: Interactive command interface
 
@@ -36,6 +36,8 @@ The purpose is to read cell voltages and temperatures from Mitsubishi Outlander 
 
 - **Pack Statistics**:
   - Min/max/average cell voltages
+  - Median cell voltage and pack-wide cell delta
+  - Complete eight-cell voltage for every CMU module
   - Min/max/average temperatures
   - Pack voltage calculation
   - Delta voltage tracking
@@ -159,17 +161,31 @@ pio run -t upload
 
 Once connected to WiFi, the serial console will display the IP address. Navigate to `http://<ip-address>/` in your browser to see the web dashboard.
 
+### OTA Updates
+
+The first OTA-capable firmware must be installed over USB. Later updates can be uploaded over WiFi:
+
+```bash
+pio run -e outlander_bms_ota -t upload
+```
+
+The OTA environment defaults to `192.168.2.90`; use `--upload-port <ip-or-hostname>` if the address changes. OTA is authenticated with `OTA_PASSWORD` from the ignored `.config.h`, falling back to the private `WIFI_PASSWORD` when no separate OTA password is defined. The OTA listener is restored automatically after a WiFi reconnect.
+
 ## Web Dashboard
 
 The web interface provides real-time monitoring of:
 - State of Charge (SOC) percentage
 - Pack voltage
+- Pack-wide cell-voltage delta
+- Per-module voltage totals for each complete eight-cell CMU
 - Current flow (charge/discharge)
 - Individual cell voltages (color-coded)
 - Temperature readings
 - Cell balancing status
 - Protection system status
 - CAN bus connectivity
+- Collapsible Bus A/Bus B sections when no CMUs are selected
+- Confirmed reboot control with visible restart feedback
 
 ![web server](web_server.png)
 
