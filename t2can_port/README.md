@@ -178,6 +178,7 @@ The web interface provides real-time monitoring of:
 - Pack voltage
 - Pack-wide cell-voltage delta
 - Per-module voltage totals for each complete eight-cell CMU
+- SIMPBMS/Battery Emulator design maximum and minimum voltage limits
 - Current flow (charge/discharge)
 - Individual cell voltages (color-coded)
 - Temperature readings

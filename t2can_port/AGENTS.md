@@ -299,6 +299,7 @@ Updated periodically and displayed in serial and web interfaces.
 
 **Web Dashboard** (`src/web_server.cpp`): Real-time monitoring
 - Summary metrics including pack-wide cell delta and median balancing target
+- SIMPBMS design maximum/minimum voltage limits sent to Battery Emulator
 - Color-coded cell display
 - Complete per-module voltage totals
 - Collapsible empty Bus A and Bus B sections

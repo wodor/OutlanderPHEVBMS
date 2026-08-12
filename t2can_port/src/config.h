@@ -166,4 +166,31 @@ constexpr long DEFAULT_LOW_CELL_MV = 5000;  // Initial "lowest cell" value (impo
 #define OTA_PASSWORD WIFI_PASSWORD
 #endif
 
+// MQTT credentials live in the optional, ignored .mqtt_config.h file. MQTT is
+// deliberately separate from WiFi/OTA credentials so it can be rotated without
+// changing OTA access.
+#if __has_include("../.mqtt_config.h")
+    #include "../.mqtt_config.h"
+#endif
+
+#ifndef MQTT_HOST
+#define MQTT_HOST ""
+#endif
+
+#ifndef MQTT_PORT
+#define MQTT_PORT 1883
+#endif
+
+#ifndef MQTT_USERNAME
+#define MQTT_USERNAME ""
+#endif
+
+#ifndef MQTT_PASSWORD
+#define MQTT_PASSWORD ""
+#endif
+
+#ifndef MQTT_CLIENT_ID
+#define MQTT_CLIENT_ID "outlander-bms"
+#endif
+
 constexpr unsigned long INTERVAL_WIFI_POLL_MS = 1000;  // Check WiFi state every 1s

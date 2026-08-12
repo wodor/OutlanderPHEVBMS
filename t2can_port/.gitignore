@@ -5,3 +5,4 @@
 .vscode/launch.json
 .vscode/ipch
 .config.h
+.mqtt_config.h

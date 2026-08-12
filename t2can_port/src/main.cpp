@@ -35,6 +35,7 @@
 #include "protection.h"
 #include "ess_control.h"
 #include "simpbms_can.h"
+#include "mqtt_handler.h"
 
 // =============================================================================
 // TIMING STATE
@@ -150,6 +151,9 @@ void setup() {
     // Initialize SIMPBMS CAN output
     simpBmsInit();
 
+    // Home Assistant MQTT Discovery integration.
+    mqttInit();
+
     Serial.println();
     Serial.println("Commands: 'r' = report, 'b' = balancing, 'h' = help");
     Serial.println("Waiting for BMS data (dots = heartbeat)...");
@@ -180,6 +184,9 @@ void loop() {
 
     // Service authenticated OTA uploads on every loop iteration.
     wifiHandleOta();
+
+    // Publish Home Assistant state without blocking the CAN loop.
+    mqttTick();
 
     // 2. Process incoming CAN messages
     //    This reads all available messages and updates g_bmsState
