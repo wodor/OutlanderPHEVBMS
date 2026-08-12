@@ -52,6 +52,13 @@ void settingsLoad() {
     g_bmsSettings.useBusAForCmu = s_prefs.getBool("cmuAen", g_bmsSettings.useBusAForCmu);
     g_bmsSettings.simpBmsEnabled = s_prefs.getBool("simpben", g_bmsSettings.simpBmsEnabled);
 
+    // Load SOC voltage curve (persisted as individual int keys)
+    g_bmsSettings.socVoltageCurve[0] = s_prefs.getInt("socV0", g_bmsSettings.socVoltageCurve[0]);
+    g_bmsSettings.socVoltageCurve[1] = s_prefs.getInt("socV1", g_bmsSettings.socVoltageCurve[1]);
+    g_bmsSettings.socVoltageCurve[2] = s_prefs.getInt("socV2", g_bmsSettings.socVoltageCurve[2]);
+    g_bmsSettings.socVoltageCurve[3] = s_prefs.getInt("socV3", g_bmsSettings.socVoltageCurve[3]);
+    g_bmsSettings.useVoltageSoc = s_prefs.getBool("useVSoc", g_bmsSettings.useVoltageSoc);
+
     s_prefs.end();
 
     Serial.println("[BMS] Settings loaded from NVS");
@@ -60,6 +67,10 @@ void settingsLoad() {
     Serial.printf("[BMS] Bus A for CMU: %s, SIMPBMS: %s\n",
                   g_bmsSettings.useBusAForCmu ? "YES" : "NO",
                   g_bmsSettings.simpBmsEnabled ? "ENABLED" : "DISABLED");
+    Serial.printf("[BMS] SOC curve: [%d,%d,%d,%d] useVoltageSoc=%s\n",
+                  g_bmsSettings.socVoltageCurve[0], g_bmsSettings.socVoltageCurve[1],
+                  g_bmsSettings.socVoltageCurve[2], g_bmsSettings.socVoltageCurve[3],
+                  g_bmsSettings.useVoltageSoc ? "YES" : "NO");
 }
 
 void settingsSave() {
@@ -69,6 +80,11 @@ void settingsSave() {
     s_prefs.putUInt("cmusB", g_bmsSettings.expectedCmusB);
     s_prefs.putBool("cmuAen", g_bmsSettings.useBusAForCmu);
     s_prefs.putBool("simpben", g_bmsSettings.simpBmsEnabled);
+    s_prefs.putInt("socV0", g_bmsSettings.socVoltageCurve[0]);
+    s_prefs.putInt("socV1", g_bmsSettings.socVoltageCurve[1]);
+    s_prefs.putInt("socV2", g_bmsSettings.socVoltageCurve[2]);
+    s_prefs.putInt("socV3", g_bmsSettings.socVoltageCurve[3]);
+    s_prefs.putBool("useVSoc", g_bmsSettings.useVoltageSoc);
 
     s_prefs.end();
     Serial.println("[BMS] Settings saved to NVS");

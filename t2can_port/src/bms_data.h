@@ -94,7 +94,7 @@ struct BmsSettings {
     
     // SOC voltage curve (for voltage-based SOC)
     // Maps voltage to SOC: [lowVolt_mV, lowSOC_%, highVolt_mV, highSOC_%]
-    int socVoltageCurve[4];     // Default: [3100, 10, 4100, 90]
+    int socVoltageCurve[4];     // Default: [3500, 0, 4100, 100]
     bool useVoltageSoc;         // If true, use voltage-based SOC instead of coulomb-counting
     
     // Charger configuration
@@ -149,8 +149,8 @@ struct BmsSettings {
         seriesCells(12),
         parallelStrings(1),
         capacityAh(100),
-        socVoltageCurve{3100, 10, 4100, 90},
-        useVoltageSoc(false),
+        socVoltageCurve{3500, 0, 4100, 100},
+        useVoltageSoc(true),
         chargerType(0),
         chargerSpeedMs(100),
         chargerDirect(true),

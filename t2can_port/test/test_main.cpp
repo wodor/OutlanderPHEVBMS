@@ -6,6 +6,7 @@
 #include <unity.h>
 #include "../src/bms_data.h"
 #include "../src/protection.h"
+#include <Preferences.h>
 
 extern BmsState g_bmsState;
 extern BmsSettings g_bmsSettings;
@@ -21,6 +22,9 @@ void test_module_voltage_requires_all_cells();
 void test_has_any_data();
 void test_get_pack_voltage_parallel_strings();
 void test_settings_defaults();
+void test_settings_soc_curve_save_reload();
+void test_soc_curve_validation_accepts_exact_ordered_values();
+void test_soc_curve_validation_rejects_invalid_without_mutation();
 void test_cmu_data_init();
 
 // Test functions from test_soc_calc.cpp
@@ -89,6 +93,7 @@ void test_float_operations_accuracy();
 extern unsigned long g_mockMillis;
 
 void setUp(void) {
+    Preferences::clearAll();
     g_bmsState = BmsState();
     g_bmsSettings = BmsSettings();
     protectionInit();
@@ -116,6 +121,9 @@ int main(int argc, char **argv) {
     RUN_TEST(test_has_any_data);
     RUN_TEST(test_get_pack_voltage_parallel_strings);
     RUN_TEST(test_settings_defaults);
+    RUN_TEST(test_settings_soc_curve_save_reload);
+    RUN_TEST(test_soc_curve_validation_accepts_exact_ordered_values);
+    RUN_TEST(test_soc_curve_validation_rejects_invalid_without_mutation);
     RUN_TEST(test_cmu_data_init);
 
     // SOC calculation tests

@@ -5,6 +5,8 @@
 
 #include <unity.h>
 #include "../src/bms_data.h"
+#include "../src/soc_curve_validation.h"
+#include <Preferences.h>
 
 extern BmsState g_bmsState;
 extern BmsSettings g_bmsSettings;
@@ -232,10 +234,57 @@ void test_settings_defaults() {
     TEST_ASSERT_EQUAL_INT(100, settings.capacityAh);
     
     // SOC curve defaults
-    TEST_ASSERT_EQUAL_INT(3100, settings.socVoltageCurve[0]);
-    TEST_ASSERT_EQUAL_INT(10, settings.socVoltageCurve[1]);
+    TEST_ASSERT_EQUAL_INT(3500, settings.socVoltageCurve[0]);
+    TEST_ASSERT_EQUAL_INT(0, settings.socVoltageCurve[1]);
     TEST_ASSERT_EQUAL_INT(4100, settings.socVoltageCurve[2]);
-    TEST_ASSERT_EQUAL_INT(90, settings.socVoltageCurve[3]);
+    TEST_ASSERT_EQUAL_INT(100, settings.socVoltageCurve[3]);
+    TEST_ASSERT_TRUE(settings.useVoltageSoc);
+}
+
+void test_settings_soc_curve_save_reload() {
+    Preferences::clearAll();
+    g_bmsSettings.socVoltageCurve[0] = 3300;
+    g_bmsSettings.socVoltageCurve[1] = 5;
+    g_bmsSettings.socVoltageCurve[2] = 4200;
+    g_bmsSettings.socVoltageCurve[3] = 95;
+    g_bmsSettings.useVoltageSoc = false;
+    settingsSave();
+
+    g_bmsSettings = BmsSettings();
+    settingsLoad();
+
+    TEST_ASSERT_EQUAL_INT(3300, g_bmsSettings.socVoltageCurve[0]);
+    TEST_ASSERT_EQUAL_INT(5, g_bmsSettings.socVoltageCurve[1]);
+    TEST_ASSERT_EQUAL_INT(4200, g_bmsSettings.socVoltageCurve[2]);
+    TEST_ASSERT_EQUAL_INT(95, g_bmsSettings.socVoltageCurve[3]);
+    TEST_ASSERT_FALSE(g_bmsSettings.useVoltageSoc);
+}
+
+void test_soc_curve_validation_accepts_exact_ordered_values() {
+    int curve[4] = {1, 2, 3, 4};
+    TEST_ASSERT_TRUE(parseSocVoltageCurve("3500,0,4100,100", curve));
+    TEST_ASSERT_EQUAL_INT(3500, curve[0]);
+    TEST_ASSERT_EQUAL_INT(0, curve[1]);
+    TEST_ASSERT_EQUAL_INT(4100, curve[2]);
+    TEST_ASSERT_EQUAL_INT(100, curve[3]);
+}
+
+void test_soc_curve_validation_rejects_invalid_without_mutation() {
+    const char* invalid[] = {
+        "3500,0,4100", "3500,0,4100,100,1", "3500,,4100,100",
+        "3500,zero,4100,100", "1999,0,4100,100", "3500,-1,4100,100",
+        "3500,0,5001,100", "3500,0,4100,101", "4100,0,3500,100",
+        "3500,100,4100,0", "3500,0,3500,100", "3500,50,4100,50",
+        " 3500,0,4100,100", "3500,0,4100,100 "
+    };
+    for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
+        int curve[4] = {3200, 10, 4200, 90};
+        TEST_ASSERT_FALSE(parseSocVoltageCurve(invalid[i], curve));
+        TEST_ASSERT_EQUAL_INT(3200, curve[0]);
+        TEST_ASSERT_EQUAL_INT(10, curve[1]);
+        TEST_ASSERT_EQUAL_INT(4200, curve[2]);
+        TEST_ASSERT_EQUAL_INT(90, curve[3]);
+    }
 }
 
 /**

@@ -12,6 +12,7 @@
  */
 
 #include "web_server.h"
+#include "soc_curve_validation.h"
 #include "config.h"
 #include "bms_data.h"
 #include "protection.h"
@@ -842,11 +843,34 @@ static void handleApiReboot(AsyncWebServerRequest* request) {
 }
 
 static void handleApiConfig(AsyncWebServerRequest* request) {
+    int validatedSocCurve[4];
+    const bool hasSocCurve = request->hasParam("socCurve", true);
+    if (hasSocCurve) {
+        const String curve = request->getParam("socCurve", true)->value();
+        if (!parseSocVoltageCurve(curve.c_str(), validatedSocCurve)) {
+            request->send(400, "application/json", "{\"error\":\"Invalid SOC curve\"}");
+            return;
+        }
+    }
+
     if (request->hasParam("expectedCmusA", true)) {
         g_bmsSettings.expectedCmusA = request->getParam("expectedCmusA", true)->value().toInt();
     }
     if (request->hasParam("expectedCmusB", true)) {
         g_bmsSettings.expectedCmusB = request->getParam("expectedCmusB", true)->value().toInt();
+    }
+
+    if (hasSocCurve) {
+        for (int i = 0; i < 4; ++i) g_bmsSettings.socVoltageCurve[i] = validatedSocCurve[i];
+        Serial.printf("[Web] SOC curve set to [%d,%d,%d,%d]\n",
+                      g_bmsSettings.socVoltageCurve[0], g_bmsSettings.socVoltageCurve[1],
+                      g_bmsSettings.socVoltageCurve[2], g_bmsSettings.socVoltageCurve[3]);
+    }
+
+    if (request->hasParam("useVoltageSoc", true)) {
+        String val = request->getParam("useVoltageSoc", true)->value();
+        g_bmsSettings.useVoltageSoc = (val == "1" || val == "true");
+        Serial.printf("[Web] useVoltageSoc set to %s\n", g_bmsSettings.useVoltageSoc ? "YES" : "NO");
     }
 
     settingsSave();
