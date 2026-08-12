@@ -17,9 +17,8 @@
 void webServerInit();
 
 /**
- * Process deferred web-server actions from the Arduino main loop.
- *
- * The reboot endpoint schedules a restart instead of restarting inside the
- * asynchronous request callback, allowing the HTTP response to reach the UI.
+ * Compatibility hook for callers built against earlier firmware revisions.
+ * Rebooting is now handled by a dedicated FreeRTOS task so it does not depend
+ * on the Arduino main loop making progress.
  */
 void webServerTick();

@@ -47,8 +47,8 @@ void canPoll();
  * Send balance command to the BMS
  *
  * The Outlander BMS expects periodic messages on CAN ID 0x3C3 to control
- * cell balancing. We send the target voltage (lowest cell) so all cells
- * balance down to that level.
+ * cell balancing. We send the eighth-lowest valid cell voltage, leaving the
+ * seven lowest cells untouched while higher cells balance down to that level.
  *
  * Call this periodically (every ~400ms) from loop().
  */
@@ -81,6 +81,11 @@ struct CanStats {
     uint32_t readAttempts;        // Total readMessage() calls that returned OK
     uint32_t txAttempts;          // Total sendMessage() calls
     uint32_t txSuccess;           // Successful transmissions
+    uint32_t balanceTxAttempts;   // Enabled balance frames submitted to CAN
+    uint32_t balanceTxQueued;     // Enabled balance frames accepted by CAN driver
+    uint32_t lastBalanceCommandTime; // millis() when an enabled balance frame was sent
+    long     lastBalanceTargetMv; // Target in the most recent enabled balance frame
+    uint8_t  lastBalanceBusMask;  // Bit 0 = Bus A, bit 1 = Bus B
     uint8_t  lastErrorFlags;      // Last MCP2515 EFLG register value
     uint8_t  lastInterrupts;      // Last CANINTF register value
     uint8_t  lastStatus;          // Last STATUS register value

@@ -187,7 +187,8 @@ struct BmsState {
     // Basic measurements
     long    lowestCellMv;               // Lowest cell voltage across entire pack
     long    highestCellMv;              // Highest cell voltage across entire pack
-    long    medianCellMv;               // Median valid cell voltage, used as balance target
+    long    medianCellMv;               // Median valid cell voltage across the pack
+    long    balanceTargetMv;            // Eighth-lowest valid cell voltage; lower seven are left untouched
     long    cellVoltageDeltaMv;         // Highest minus lowest valid cell voltage
     float   packVoltage;                // Total pack voltage in volts
     float   avgCellVoltage;             // Average cell voltage in volts
@@ -227,6 +228,7 @@ struct BmsState {
         lowestCellMv(DEFAULT_LOW_CELL_MV), 
         highestCellMv(0),
         medianCellMv(0),
+        balanceTargetMv(0),
         cellVoltageDeltaMv(0),
         packVoltage(0.0f),
         avgCellVoltage(0.0f),
@@ -259,6 +261,7 @@ struct BmsState {
         lowestCellMv = DEFAULT_LOW_CELL_MV;
         highestCellMv = 0;
         medianCellMv = 0;
+        balanceTargetMv = 0;
         cellVoltageDeltaMv = 0;
         packVoltage = 0.0f;
         avgCellVoltage = 0.0f;
@@ -324,6 +327,13 @@ struct BmsState {
                 medianCellMv = (lowerMiddle + upperMiddle) / 2;
             } else {
                 medianCellMv = validCellVoltages[cellCount / 2];
+            }
+
+            // Keep the lowest seven valid cells out of balancing. The eighth
+            // lowest cell becomes the target, so only cells above it are asked
+            // to discharge. With fewer than eight cells, leave balancing off.
+            if (cellCount >= 8) {
+                balanceTargetMv = validCellVoltages[7];
             }
         }
         if (tempCount > 0) {

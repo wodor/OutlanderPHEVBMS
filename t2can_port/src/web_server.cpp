@@ -7,7 +7,7 @@
  *   GET  /api/module/N  - Single module data (N = 1-8)
  *   GET  /api/summary   - Pack summary (lowest cell, balancing status)
  *   POST /api/balancing - Toggle balancing on/off
- *   POST /api/reboot    - Schedule a device reboot
+ *   POST /api/reboot    - Acknowledge, then reboot the device
  *   GET  /              - HTML dashboard
  */
 
@@ -16,13 +16,28 @@
 #include "bms_data.h"
 #include "protection.h"
 #include "ess_control.h"
+#include "simpbms_can.h"
+#include "can_handler.h"
 #include <ESPAsyncWebServer.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 // Web server instance on port 80
 static AsyncWebServer s_server(80);
-static volatile bool s_rebootPending = false;
-static unsigned long s_rebootRequestedAt = 0;
-static constexpr unsigned long REBOOT_DELAY_MS = 1000;
+static volatile bool s_rebootTaskScheduled = false;
+static constexpr TickType_t REBOOT_DELAY_TICKS = pdMS_TO_TICKS(1000);
+
+/**
+ * ESPAsyncWebServer request callbacks do not run in the Arduino loop. Run the
+ * restart from a dedicated task so an acknowledgement can leave the TCP stack
+ * before reset, even if the main loop is busy or stalled on a peripheral.
+ */
+static void rebootTask(void *) {
+    vTaskDelay(REBOOT_DELAY_TICKS);
+    Serial.println("[Web] Rebooting device now");
+    Serial.flush();
+    ESP.restart();
+}
 
 // =============================================================================
 // JSON BUILDERS
@@ -80,6 +95,7 @@ static String buildModuleJson(int moduleIndex) {
  * Build JSON for all modules.
  */
 static String buildFullBmsJson() {
+    const SimpBmsDesignVoltageLimits designLimits = simpBmsGetDesignVoltageLimits();
     String json = "{";
     json += "\"modules\":[";
 
@@ -93,8 +109,12 @@ static String buildFullBmsJson() {
     json += "\"highestCellMv\":" + String(g_bmsState.highestCellMv) + ",";
     json += "\"medianCellMv\":" + String(g_bmsState.medianCellMv) + ",";
     json += "\"cellVoltageDeltaMv\":" + String(g_bmsState.cellVoltageDeltaMv) + ",";
+    json += "\"simpBmsEnabled\":" + String(g_bmsSettings.simpBmsEnabled ? "true" : "false") + ",";
+    json += "\"simpBmsMaxDesignVoltageV\":" + String(designLimits.maxVoltageV, 1) + ",";
+    json += "\"simpBmsMinDesignVoltageV\":" + String(designLimits.minVoltageV, 1) + ",";
+    json += "\"simpBmsSeriesCells\":" + String(designLimits.seriesCells) + ",";
     json += "\"balancingEnabled\":" + String(g_bmsState.balancingEnabled ? "true" : "false") + ",";
-    json += "\"balanceTargetMv\":" + String(g_bmsState.balancingEnabled ? g_bmsState.medianCellMv : 0);
+    json += "\"balanceTargetMv\":" + String(g_bmsState.balancingEnabled ? g_bmsState.balanceTargetMv : 0);
     json += "}";
 
     return json;
@@ -140,6 +160,8 @@ static String buildSummaryJson() {
     const bool outNeg = digitalRead(PIN_OUT_CONTACTOR_NEG) == HIGH;
     const bool outCharger = digitalRead(PIN_OUT_CHARGER_EN) == HIGH;
     const bool outDischarge = digitalRead(PIN_OUT_DISCHARGE_EN) == HIGH;
+    const SimpBmsDesignVoltageLimits designLimits = simpBmsGetDesignVoltageLimits();
+    const CanStats canStats = canGetStats();
 
     String json = "{";
     json += "\"modulesPresent\":" + String(presentCount) + ",";
@@ -155,14 +177,24 @@ static String buildSummaryJson() {
     json += "\"soc\":" + String(g_bmsState.soc) + ",";
     json += "\"currentAmps\":" + String(g_bmsState.currentAmps, 2) + ",";
     json += "\"avgCurrentAmps\":" + String(g_bmsState.avgCurrentAmps, 2) + ",";
+    json += "\"simpBmsEnabled\":" + String(g_bmsSettings.simpBmsEnabled ? "true" : "false") + ",";
+    json += "\"simpBmsMaxDesignVoltageV\":" + String(designLimits.maxVoltageV, 1) + ",";
+    json += "\"simpBmsMinDesignVoltageV\":" + String(designLimits.minVoltageV, 1) + ",";
+    json += "\"simpBmsSeriesCells\":" + String(designLimits.seriesCells) + ",";
     json += "\"balancingEnabled\":" + String(g_bmsState.balancingEnabled ? "true" : "false") + ",";
-    json += "\"balanceTargetMv\":" + String(g_bmsState.balancingEnabled ? g_bmsState.medianCellMv : 0) + ",";
+    json += "\"balanceTargetMv\":" + String(g_bmsState.balancingEnabled ? g_bmsState.balanceTargetMv : 0) + ",";
     json += "\"cellsBalancing\":" + String(balancingCount) + ",";
     json += "\"protectionStatus\":\"" + String(protectionGetStatus()) + "\",";
     json += "\"essState\":\"" + String(essGetStateName()) + "\",";
     json += "\"contactorClosed\":" + String(essIsContactorClosed() ? "true" : "false") + ",";
     json += "\"chargerEnabled\":" + String(g_bmsState.chargerEnabled ? "true" : "false") + ",";
     json += "\"msSinceCanMsg\":" + String(msSinceCan) + ",";
+    json += "\"uptimeMs\":" + String(millis()) + ",";
+    json += "\"balanceTxAttempts\":" + String(canStats.balanceTxAttempts) + ",";
+    json += "\"balanceTxQueued\":" + String(canStats.balanceTxQueued) + ",";
+    json += "\"lastBalanceTargetMv\":" + String(canStats.lastBalanceTargetMv) + ",";
+    json += "\"lastBalanceBusMask\":" + String(canStats.lastBalanceBusMask) + ",";
+    json += "\"msSinceBalanceCommand\":" + String(canStats.lastBalanceCommandTime > 0 ? millis() - canStats.lastBalanceCommandTime : 0) + ",";
     json += "\"hasData\":" + String(presentCount > 0 ? "true" : "false") + ",";
     json += "\"expectedTotal\":" + String(expectedCount) + ",";
     json += "\"expectedCmusA\":" + String(g_bmsSettings.expectedCmusA) + ",";
@@ -242,6 +274,14 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             flex-wrap: wrap;
             gap: 18px;
         }
+        .protection-row {
+            background: #121b34;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            padding: 12px 20px;
+            text-align: center;
+        }
+        .protection-row .summary-label { display: inline; margin-right: 8px; }
         .summary-item { text-align: center; }
         .summary-value { font-size: 1.8em; font-weight: bold; color: #4ade80; }
         .summary-label { font-size: 0.9em; color: #888; }
@@ -322,6 +362,7 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
         button.danger:hover { background: #b91c1c; }
         button:disabled { cursor: wait; opacity: 0.65; }
         .status { text-align: center; margin-top: 10px; color: #666; font-size: 0.85em; }
+        .uptime { margin-top: 2px; }
         .error { color: #ef4444; }
     </style>
 </head>
@@ -341,6 +382,65 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             <div class="summary-value" id="chargerState">--</div>
             <div class="summary-label">Charger</div>
         </div>
+    </div>
+
+    <div class="summary">
+        <div class="summary-item">
+            <div class="summary-value" id="canStatus">--</div>
+            <div class="summary-label">CAN Bus</div>
+        </div>
+        <div class="summary-item">
+            <div class="summary-value" id="soc">--</div>
+            <div class="summary-label">SOC (%)</div>
+        </div>
+        <div class="summary-item">
+            <div class="summary-value" id="packVoltage">--</div>
+            <div class="summary-label">Pack Voltage (V)</div>
+        </div>
+        <div class="summary-item">
+            <div class="summary-value" id="lowestCell">--</div>
+            <div class="summary-label">Lowest Cell (mV)</div>
+        </div>
+        <div class="summary-item">
+            <div class="summary-value" id="highestCell">--</div>
+            <div class="summary-label">Highest Cell (mV)</div>
+        </div>
+        <div class="summary-item">
+            <div class="summary-value" id="voltageDelta">--</div>
+            <div class="summary-label">All-Cell Delta (mV)</div>
+        </div>
+        <div class="summary-item">
+            <div class="summary-value" id="avgTemp">--</div>
+            <div class="summary-label">Avg Temp (°C)</div>
+        </div>
+        <div class="summary-item">
+            <div class="summary-value" id="modulesOnline">--</div>
+            <div class="summary-label">Modules Online</div>
+        </div>
+        <div class="summary-item">
+            <div class="summary-value" id="cellsBalancing">--</div>
+            <div class="summary-label">Cells Balancing</div>
+        </div>
+        <div class="summary-item">
+            <div class="summary-value" id="balanceTarget">--</div>
+            <div class="summary-label">8th-Lowest Balance Target (mV)</div>
+        </div>
+        <div class="summary-item">
+            <div class="summary-value" id="simpBmsDesignLimits">--</div>
+            <div class="summary-label">BE Design Max / Min (V)</div>
+        </div>
+    </div>
+
+    <div class="protection-row">
+        <span class="summary-label">Protection</span>
+        <span class="summary-value" id="protection">--</span>
+    </div>
+
+    <div class="modules" id="modulesContainer"></div>
+
+    <div class="controls">
+        <button id="balanceBtn" onclick="toggleBalancing()">Balancing: OFF</button>
+        <button id="rebootBtn" class="danger" onclick="rebootDevice()">Reboot Device</button>
     </div>
 
     <div class="io-summary">
@@ -366,65 +466,9 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
         </div>
     </div>
 
-    <div class="summary">
-        <div class="summary-item">
-            <div class="summary-value" id="canStatus">--</div>
-            <div class="summary-label">CAN Bus</div>
-        </div>
-        <div class="summary-item">
-            <div class="summary-value" id="soc">--</div>
-            <div class="summary-label">SOC (%)</div>
-        </div>
-        <div class="summary-item">
-            <div class="summary-value" id="packVoltage">--</div>
-            <div class="summary-label">Pack Voltage (V)</div>
-        </div>
-        <div class="summary-item">
-            <div class="summary-value" id="current">--</div>
-            <div class="summary-label">Current (A)</div>
-        </div>
-        <div class="summary-item">
-            <div class="summary-value" id="lowestCell">--</div>
-            <div class="summary-label">Lowest Cell (mV)</div>
-        </div>
-        <div class="summary-item">
-            <div class="summary-value" id="highestCell">--</div>
-            <div class="summary-label">Highest Cell (mV)</div>
-        </div>
-        <div class="summary-item">
-            <div class="summary-value" id="voltageDelta">--</div>
-            <div class="summary-label">All-Cell Delta (mV)</div>
-        </div>
-        <div class="summary-item">
-            <div class="summary-value" id="avgTemp">--</div>
-            <div class="summary-label">Avg Temp (°C)</div>
-        </div>
-        <div class="summary-item">
-            <div class="summary-value" id="protection">--</div>
-            <div class="summary-label">Protection</div>
-        </div>
-        <div class="summary-item">
-            <div class="summary-value" id="modulesOnline">--</div>
-            <div class="summary-label">Modules Online</div>
-        </div>
-        <div class="summary-item">
-            <div class="summary-value" id="cellsBalancing">--</div>
-            <div class="summary-label">Cells Balancing</div>
-        </div>
-        <div class="summary-item">
-            <div class="summary-value" id="balanceTarget">--</div>
-            <div class="summary-label">Median Balance Target (mV)</div>
-        </div>
-    </div>
-
-    <div class="modules" id="modulesContainer"></div>
-
-    <div class="controls">
-        <button id="balanceBtn" onclick="toggleBalancing()">Balancing: OFF</button>
-        <button id="rebootBtn" class="danger" onclick="rebootDevice()">Reboot Device</button>
-    </div>
-
     <div class="status" id="status">Connecting...</div>
+    <div class="status uptime" id="uptime">Uptime: --</div>
+    <div class="status uptime" id="balanceDiagnostics">Balance CAN: --</div>
 
     <script>
         let balancingEnabled = false;
@@ -483,8 +527,17 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             document.getElementById('voltageDelta').textContent = hasData ? summary.cellVoltageDeltaMv : na;
             document.getElementById('packVoltage').textContent = hasData ? summary.packVoltage : na;
             document.getElementById('soc').textContent = hasData ? (summary.soc + '%') : na;
-            document.getElementById('current').textContent = hasData ? summary.avgCurrentAmps : na;
             document.getElementById('avgTemp').textContent = hasData ? summary.avgTemp : na;
+
+            const designEl = document.getElementById('simpBmsDesignLimits');
+            if (summary.simpBmsEnabled) {
+                designEl.textContent = summary.simpBmsMaxDesignVoltageV.toFixed(1) + ' / ' +
+                    summary.simpBmsMinDesignVoltageV.toFixed(1);
+                designEl.style.color = '#93c5fd';
+            } else {
+                designEl.textContent = 'OFF';
+                designEl.style.color = '#6b7280';
+            }
             
             // Protection status with color
             const protEl = document.getElementById('protection');
@@ -542,8 +595,8 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             document.getElementById('balanceBtn').className = balancingEnabled ? '' : 'off';
             
             const targetEl = document.getElementById('balanceTarget');
-            if (summary.medianCellMv > 0 && hasData) {
-                targetEl.textContent = summary.medianCellMv;
+            if (summary.balanceTargetMv > 0 && hasData) {
+                targetEl.textContent = summary.balanceTargetMv;
                 targetEl.style.color = balancingEnabled ? '#4ade80' : '#f59e0b';
             } else {
                 targetEl.textContent = '--';
@@ -630,6 +683,21 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             document.getElementById('cellsBalancing').textContent = balancingCount;
             document.getElementById('status').textContent = 'Last update: ' + new Date().toLocaleTimeString();
             document.getElementById('status').className = 'status';
+            const uptimeSeconds = Math.floor(summary.uptimeMs / 1000);
+            const days = Math.floor(uptimeSeconds / 86400);
+            const hours = Math.floor((uptimeSeconds % 86400) / 3600);
+            const minutes = Math.floor((uptimeSeconds % 3600) / 60);
+            const seconds = uptimeSeconds % 60;
+            const uptimePrefix = days > 0 ? days + 'd ' : '';
+            document.getElementById('uptime').textContent =
+                'Uptime: ' + uptimePrefix + hours + 'h ' + minutes + 'm ' + seconds + 's';
+            const busName = summary.lastBalanceBusMask === 1 ? 'A' :
+                summary.lastBalanceBusMask === 2 ? 'B' :
+                summary.lastBalanceBusMask === 3 ? 'A+B' : '--';
+            document.getElementById('balanceDiagnostics').textContent =
+                'Balance CAN: ' + summary.balanceTxQueued + '/' + summary.balanceTxAttempts +
+                ' queued, Bus ' + busName + ', target ' +
+                (summary.lastBalanceTargetMv || '--') + ' mV';
         }
 
         async function fetchData() {
@@ -756,12 +824,20 @@ static void handleApiBalancing(AsyncWebServerRequest* request) {
 }
 
 static void handleApiReboot(AsyncWebServerRequest* request) {
-    if (!s_rebootPending) {
-        s_rebootRequestedAt = millis();
-        s_rebootPending = true;
-        Serial.println("[Web] Device reboot requested");
+    if (s_rebootTaskScheduled) {
+        request->send(202, "application/json", "{\"status\":\"restarting\"}");
+        return;
     }
 
+    // Schedule before responding. The one-second delay gives AsyncTCP time to
+    // transmit the 202 response, while no main-loop cooperation is required.
+    if (xTaskCreate(rebootTask, "web_reboot", 2048, nullptr, 1, nullptr) != pdPASS) {
+        request->send(503, "application/json", "{\"error\":\"Unable to schedule reboot\"}");
+        return;
+    }
+
+    s_rebootTaskScheduled = true;
+    Serial.println("[Web] Device reboot requested");
     request->send(202, "application/json", "{\"status\":\"restarting\"}");
 }
 
@@ -827,11 +903,5 @@ void webServerInit() {
 }
 
 void webServerTick() {
-    if (!s_rebootPending || millis() - s_rebootRequestedAt < REBOOT_DELAY_MS) {
-        return;
-    }
-
-    Serial.println("[Web] Rebooting device now");
-    Serial.flush();
-    ESP.restart();
+    // Kept as a no-op for callers built against older firmware revisions.
 }

@@ -266,10 +266,10 @@ void canPoll() {
 }
 
 void canSendBalanceCommand() {
-    // Refresh the target immediately before sending. Using the median means
-    // approximately the upper half of valid cells are above the discharge target.
+    // Refresh the target immediately before sending. The target is the eighth
+    // lowest valid cell, preserving the lowest seven cells from discharge.
     g_bmsState.updatePackStatistics();
-    const long balanceTargetMv = g_bmsState.medianCellMv;
+    const long balanceTargetMv = g_bmsState.balanceTargetMv;
 
     if (g_bmsState.balancingEnabled &&
         balanceTargetMv >= 1500 && balanceTargetMv <= 4500) {
@@ -277,6 +277,10 @@ void canSendBalanceCommand() {
         s_txFrame.data[0] = highByte(balanceTargetMv);
         s_txFrame.data[1] = lowByte(balanceTargetMv);
         s_txFrame.data[2] = 1;  // Balancing enabled flag
+
+        s_canStats.lastBalanceTargetMv = balanceTargetMv;
+        s_canStats.lastBalanceCommandTime = millis();
+        s_canStats.lastBalanceBusMask = 0;
     } else {
         s_txFrame.data[0] = 0;
         s_txFrame.data[1] = 0;
@@ -285,12 +289,24 @@ void canSendBalanceCommand() {
 
     // Send to Bus A (MCP2515) if it's assigned to CMUs
     if (g_bmsSettings.useBusAForCmu && g_bmsSettings.expectedCmusA != 0) {
-        canSendFrame(s_txFrame, 0);
+        if (g_bmsState.balancingEnabled) {
+            s_canStats.balanceTxAttempts++;
+            s_canStats.lastBalanceBusMask |= 0x01;
+        }
+        if (canSendFrame(s_txFrame, 0) && g_bmsState.balancingEnabled) {
+            s_canStats.balanceTxQueued++;
+        }
     }
 
     // Send to Bus B (TWAI) if enabled and assigned to CMUs
     if (s_twaiEnabled && g_bmsSettings.expectedCmusB != 0) {
-        canSendFrame(s_txFrame, 1);
+        if (g_bmsState.balancingEnabled) {
+            s_canStats.balanceTxAttempts++;
+            s_canStats.lastBalanceBusMask |= 0x02;
+        }
+        if (canSendFrame(s_txFrame, 1) && g_bmsState.balancingEnabled) {
+            s_canStats.balanceTxQueued++;
+        }
     }
 }
 

@@ -83,6 +83,19 @@ static uint16_t getConfiguredModuleCountForLimits() {
     return fallback > 0 ? fallback : 1;
 }
 
+SimpBmsDesignVoltageLimits simpBmsGetDesignVoltageLimits() {
+    const uint16_t moduleCount = getConfiguredModuleCountForLimits();
+    const uint16_t seriesCells = moduleCount * CELLS_PER_MODULE;
+
+    SimpBmsDesignVoltageLimits limits = {};
+    limits.moduleCount = moduleCount;
+    limits.seriesCells = seriesCells;
+    // Battery Emulator design limits use the configured per-cell safety limits.
+    limits.maxVoltageV = g_bmsSettings.overVoltage * seriesCells;
+    limits.minVoltageV = g_bmsSettings.dischargeVoltage * seriesCells;
+    return limits;
+}
+
 void simpBmsInit() {
     s_stats = {};
     s_cellCount = 0;
@@ -100,15 +113,10 @@ void simpBmsTick() {
     {
         uint8_t data[8] = {0};
 
-        const uint16_t moduleCount = getConfiguredModuleCountForLimits();
-        const uint16_t seriesCells = moduleCount * CELLS_PER_MODULE;
+        const SimpBmsDesignVoltageLimits limits = simpBmsGetDesignVoltageLimits();
 
-        // Requested rule: max pack voltage = configured modules * 32V.
-        float chargeV = moduleCount * 32.0f;
-        float dischargeV = g_bmsSettings.dischargeVoltage * seriesCells;
-
-        uint16_t charge_dV = (uint16_t)round(chargeV * 10.0f);
-        uint16_t discharge_dV = (uint16_t)round(dischargeV * 10.0f);
+        uint16_t charge_dV = (uint16_t)round(limits.maxVoltageV * 10.0f);
+        uint16_t discharge_dV = (uint16_t)round(limits.minVoltageV * 10.0f);
 
         int16_t maxCharge = g_bmsState.targetChargeCurrent != 0 ? g_bmsState.targetChargeCurrent
                                                                : g_bmsSettings.maxChargeCurrent;
