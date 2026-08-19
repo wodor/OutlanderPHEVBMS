@@ -1,259 +1,134 @@
 /**
  * @file protection.cpp
- * @brief Protection system implementation
+ * @brief Critical-condition battery-safe-to-use output supervision.
  */
 
 #include "protection.h"
 #include "bms_data.h"
+#include "config.h"
 
-// Protection fault flags
-static bool s_overVoltFault = false;
-static bool s_underVoltFault = false;
-static bool s_overTempFault = false;
-static bool s_underTempFault = false;
-static bool s_cellImbalanceFault = false;
-static bool s_commFault = false;
-static bool s_underVoltageProtectionEnabled = true;
+namespace {
+bool s_overTempFault = false;
+bool s_overVoltageFault = false;
+bool s_underVoltageFault = false;
+bool s_commFault = false;
+bool s_supervisedOverrideActive = false;
+unsigned long s_supervisedOverrideStartedAt = 0;
+constexpr unsigned long SUPERVISED_OVERRIDE_DURATION_MS = 10UL * 60UL * 1000UL;
 
-// Fault latch times (for debouncing)
-static unsigned long s_underVoltTime = 0;
-static unsigned long s_overVoltTime = 0;
-static const unsigned long FAULT_DEBOUNCE_MS = 1000;  // 1 second debounce
+bool configuredCmusAreFresh(unsigned long now) {
+    for (int cmu = 0; cmu < 10; ++cmu) {
+        if (g_bmsSettings.useBusAForCmu && (g_bmsSettings.expectedCmusA & (1U << cmu))) {
+            const CmuData& data = g_bmsState.modules[cmu];
+            if (!data.present || now - data.lastSeenTime >= CAN_DATA_TIMEOUT_MS) return false;
+        }
+        if (g_bmsSettings.expectedCmusB & (1U << cmu)) {
+            const CmuData& data = g_bmsState.modules[cmu + 10];
+            if (!data.present || now - data.lastSeenTime >= CAN_DATA_TIMEOUT_MS) return false;
+        }
+    }
+    return true;
+}
+
+bool supervisedOverrideIsActive(unsigned long now) {
+    if (!s_supervisedOverrideActive) return false;
+    if (now - s_supervisedOverrideStartedAt >= SUPERVISED_OVERRIDE_DURATION_MS) {
+        s_supervisedOverrideActive = false;
+        Serial.println("[SAFETY] Supervised recovery override expired");
+    }
+    return s_supervisedOverrideActive;
+}
+}  // namespace
 
 void protectionInit() {
-    s_underVoltageProtectionEnabled = true;
+    s_supervisedOverrideActive = false;
+    s_supervisedOverrideStartedAt = 0;
     protectionClearFaults();
-    Serial.println("[PROTECTION] System initialized");
+    pinMode(PIN_BATTERY_SAFE_TO_USE, OUTPUT);
+    // Permissive by default. The 10-second CAN timeout below is also the
+    // startup grace period while selected CMUs start reporting.
+    digitalWrite(PIN_BATTERY_SAFE_TO_USE, HIGH);
+    Serial.println("[SAFETY] Battery-safe-to-use output initialized HIGH");
 }
 
 bool protectionCheck() {
-    bool allOk = true;
-    
-    // Check communication with expected CMUs (runs even if no cell data yet)
-    bool allCmusOk = true;
-    for (int m = 0; m < 10; m++) {
-        // Bus A
-        if (g_bmsSettings.useBusAForCmu && (g_bmsSettings.expectedCmusA & (1 << m))) {
-            if (!g_bmsState.modules[m].present || (millis() - g_bmsState.modules[m].lastSeenTime > 5000)) {
-                allCmusOk = false;
-            }
-        }
-        // Bus B
-        if (g_bmsSettings.expectedCmusB & (1 << m)) {
-            int idx = m + 10;
-            if (!g_bmsState.modules[idx].present || (millis() - g_bmsState.modules[idx].lastSeenTime > 5000)) {
-                allCmusOk = false;
-            }
-        }
+    const unsigned long now = millis();
+    const bool globalCanStale = g_bmsState.lastCanMessageTime == 0 ||
+        now - g_bmsState.lastCanMessageTime >= CAN_DATA_TIMEOUT_MS;
+    const bool selectedCmuMissing = !configuredCmusAreFresh(now);
+    s_commFault = now >= CAN_DATA_TIMEOUT_MS && (globalCanStale || selectedCmuMissing);
+
+    s_overTempFault = false;
+    s_overVoltageFault = false;
+    s_underVoltageFault = false;
+    if (g_bmsState.hasAnyData()) {
+        g_bmsState.updatePackStatistics();
+        s_overTempFault = g_bmsState.highestTemp >= g_bmsSettings.overTemp;
+        s_overVoltageFault = g_bmsState.highestCellMv >= 4200;
+        s_underVoltageFault = g_bmsState.lowestCellMv <= 2800;
     }
 
-    // Apply a startup grace period of 10 seconds before triggering communication faults
-    if (!allCmusOk && millis() > 10000) {
-        if (!s_commFault) {
-            Serial.println("[PROTECTION] COMMUNICATION FAULT: One or more expected CMUs are offline");
-            s_commFault = true;
-        }
-        allOk = false;
-    } else if (allCmusOk) {
-        s_commFault = false;
-    }
-    
-    // If we still have zero data from CMUs, skip voltage/temperature checks
-    // but keep communication fault result.
-    if (!g_bmsState.hasAnyData()) {
-        return allOk && !s_commFault;
-    }
-    
-    // Update pack statistics now that we know we have data
-    g_bmsState.updatePackStatistics();
-    
-    float lowCellV = g_bmsState.lowestCellMv / 1000.0f;   // Convert to volts
-    float highCellV = g_bmsState.highestCellMv / 1000.0f;
-    float lowTemp = g_bmsState.lowestTemp;
-    float highTemp = g_bmsState.highestTemp;
-    
-    // SAFETY: Validate voltage readings are in reasonable range
-    // Extreme values (>10V per cell) indicate sensor failure or memory corruption
-    if (highCellV > 10.0f) {
-        Serial.printf("[PROTECTION] CRITICAL: Voltage reading exceeds safety limit: %.3fV\n", highCellV);
-        s_overVoltFault = true;
-        return false; // Immediate fault
-    }
-    
-    // SAFETY: Check for NaN or infinity in measurements
-    if (isnan(highCellV) || isinf(highCellV) || isnan(lowCellV) || isinf(lowCellV)) {
-        Serial.println("[PROTECTION] CRITICAL: Invalid voltage measurement");
-        return false; // Immediate fault
-    }
-    
-    if (isnan(highTemp) || isinf(highTemp) || isnan(lowTemp) || isinf(lowTemp)) {
-        Serial.println("[PROTECTION] CRITICAL: Invalid temperature measurement");
-        return false; // Immediate fault
-    }
-    
-    // Check overvoltage
-    if (highCellV > g_bmsSettings.overVoltage) {
-        if (!s_overVoltFault) {
-            s_overVoltFault = true;
-            s_overVoltTime = millis();
-            Serial.printf("[PROTECTION] OVERVOLTAGE FAULT: %.3fV > %.3fV\n", 
-                         highCellV, g_bmsSettings.overVoltage);
-        }
-        allOk = false;
-    } else if (highCellV < (g_bmsSettings.overVoltage - 0.1f)) {
-        // Clear with hysteresis
-        s_overVoltFault = false;
-    }
-    
-    if (s_underVoltageProtectionEnabled) {
-        // Check undervoltage (with debounce to avoid spurious trips during high discharge)
-        if (lowCellV < g_bmsSettings.underVoltage) {
-            if (s_underVoltTime == 0) {
-                s_underVoltTime = millis();
-            } else {
-                // SAFETY: Handle millis() rollover in debounce calculation
-                unsigned long elapsed = millis() - s_underVoltTime;
-                if (elapsed > FAULT_DEBOUNCE_MS) {
-                    if (!s_underVoltFault) {
-                        s_underVoltFault = true;
-                        Serial.printf("[PROTECTION] UNDERVOLTAGE FAULT: %.3fV < %.3fV\n",
-                                     lowCellV, g_bmsSettings.underVoltage);
-                    }
-                    allOk = false;
-                }
-            }
-        } else if (lowCellV > (g_bmsSettings.underVoltage + g_bmsSettings.dischargeHysteresis)) {
-            // Clear with hysteresis
-            s_underVoltFault = false;
-            s_underVoltTime = 0;
-        }
-    } else {
-        s_underVoltFault = false;
-        s_underVoltTime = 0;
-    }
-    
-    // Check overtemperature
-    if (highTemp > g_bmsSettings.overTemp) {
-        if (!s_overTempFault) {
-            s_overTempFault = true;
-            Serial.printf("[PROTECTION] OVERTEMPERATURE FAULT: %.1fC > %.1fC\n", 
-                         highTemp, g_bmsSettings.overTemp);
-        }
-        allOk = false;
-    } else if (highTemp < (g_bmsSettings.overTemp - g_bmsSettings.tempWarningOffset)) {
-        s_overTempFault = false;
-    }
-    
-    // Check undertemperature
-    if (lowTemp < g_bmsSettings.underTemp) {
-        if (!s_underTempFault) {
-            s_underTempFault = true;
-            Serial.printf("[PROTECTION] UNDERTEMPERATURE FAULT: %.1fC < %.1fC\n", 
-                         lowTemp, g_bmsSettings.underTemp);
-        }
-        allOk = false;
-    } else if (lowTemp > (g_bmsSettings.underTemp + g_bmsSettings.tempWarningOffset)) {
-        s_underTempFault = false;
-    }
-    
-    // Check cell imbalance
-    float cellDelta = highCellV - lowCellV;
-    if (cellDelta > g_bmsSettings.cellGap) {
-        if (!s_cellImbalanceFault) {
-            s_cellImbalanceFault = true;
-            Serial.printf("[PROTECTION] CELL IMBALANCE WARNING: %.3fV gap (%.3fV - %.3fV)\n", 
-                         cellDelta, highCellV, lowCellV);
-        }
-        // Note: Cell imbalance is a warning, not a hard fault
-    } else if (cellDelta < (g_bmsSettings.cellGap * 0.8f)) {
-        s_cellImbalanceFault = false;
-    }
-
-    // Return false if any fault is active (even if latched)
-    if (s_overVoltFault || s_underVoltFault || s_overTempFault || s_underTempFault || s_commFault) {
-        return false;
-    }
-    
-    return allOk;
+    const bool supervisedOverride = supervisedOverrideIsActive(now);
+    // Recovery override is intentionally narrow: it is for supervised
+    // over/undervoltage recovery only. Temperature and data-loss trips can
+    // never be bypassed by software.
+    const bool safe = !(s_commFault || s_overTempFault ||
+                        ((!supervisedOverride) &&
+                         (s_overVoltageFault || s_underVoltageFault)));
+    digitalWrite(PIN_BATTERY_SAFE_TO_USE, safe ? HIGH : LOW);
+    return safe;
 }
 
 const char* protectionGetStatus() {
-    if (s_overVoltFault) return "OVERVOLTAGE";
-    if (s_underVoltFault) return "UNDERVOLTAGE";
-    if (s_overTempFault) return "OVERTEMP";
-    if (s_underTempFault) return "UNDERTEMP";
     if (s_commFault) return "COMMUNICATION FAULT";
-    if (s_cellImbalanceFault) return "IMBALANCE WARNING";
+    if (s_overTempFault) return "OVERTEMP";
+    if (protectionSupervisedOverrideActive() &&
+        (s_overVoltageFault || s_underVoltageFault)) {
+        return "SUPERVISED OVERRIDE";
+    }
+    if (s_overVoltageFault) return "OVERVOLTAGE";
+    if (s_underVoltageFault) return "UNDERVOLTAGE";
     return "OK";
 }
 
-bool protectionCanCharge() {
-    // Don't allow charging if:
-    // - Overvoltage fault
-    // - Over temperature
-    // - Under temperature (too cold to charge)
-    
-    if (s_overVoltFault) return false;
-    if (s_overTempFault) return false;
-    
-    float lowTemp = g_bmsState.lowestTemp;
-    float highCellV = g_bmsState.highestCellMv / 1000.0f;
-    
-    // Check if temperature is below charge temperature limit
-    if (lowTemp < g_bmsSettings.chargeTemp) {
-        return false;  // Too cold to charge
+bool protectionEnableSupervisedOverride() {
+    const unsigned long now = millis();
+    const bool globalCanFresh = g_bmsState.lastCanMessageTime != 0 &&
+        now - g_bmsState.lastCanMessageTime < CAN_DATA_TIMEOUT_MS;
+    if (!globalCanFresh || !configuredCmusAreFresh(now)) {
+        Serial.println("[SAFETY] Supervised override refused: CMU CAN data is not fresh");
+        return false;
     }
-    
-    // Check if voltage is above charge voltage limit
-    if (highCellV > g_bmsSettings.chargeVoltage) {
-        return false;  // Already at max voltage
+    if (g_bmsState.hasAnyData()) {
+        g_bmsState.updatePackStatistics();
+        if (g_bmsState.highestTemp >= g_bmsSettings.overTemp) {
+            Serial.println("[SAFETY] Supervised override refused: high-temperature trip is non-overridable");
+            return false;
+        }
     }
-    
+    s_supervisedOverrideActive = true;
+    s_supervisedOverrideStartedAt = now;
+    Serial.println("[SAFETY] Supervised recovery override enabled for 10 minutes");
     return true;
 }
 
-bool protectionCanDischarge() {
-    // Don't allow discharging if:
-    // - Undervoltage fault
-    // - Over temperature
-    
-    if (s_underVoltageProtectionEnabled && s_underVoltFault) return false;
-    if (s_overTempFault) return false;
-    
-    float lowCellV = g_bmsState.lowestCellMv / 1000.0f;
-    
-    // Check if voltage is below discharge voltage limit
-    if (s_underVoltageProtectionEnabled && lowCellV < g_bmsSettings.dischargeVoltage) {
-        return false;  // Too low to discharge
-    }
-    
-    return true;
+void protectionCancelSupervisedOverride() {
+    s_supervisedOverrideActive = false;
+    Serial.println("[SAFETY] Supervised recovery override cancelled");
 }
 
-void protectionSetUndervoltageEnabled(bool enabled) {
-    s_underVoltageProtectionEnabled = enabled;
-    if (!enabled) {
-        s_underVoltFault = false;
-        s_underVoltTime = 0;
-    }
-
-    Serial.print("[PROTECTION] Undervoltage protection: ");
-    Serial.println(enabled ? "ON" : "OFF");
+bool protectionSupervisedOverrideActive() {
+    return supervisedOverrideIsActive(millis());
 }
 
-bool protectionIsUndervoltageEnabled() {
-    return s_underVoltageProtectionEnabled;
+unsigned long protectionSupervisedOverrideRemainingMs() {
+    if (!supervisedOverrideIsActive(millis())) return 0;
+    return SUPERVISED_OVERRIDE_DURATION_MS - (millis() - s_supervisedOverrideStartedAt);
 }
 
 void protectionClearFaults() {
-    s_overVoltFault = false;
-    s_underVoltFault = false;
     s_overTempFault = false;
-    s_underTempFault = false;
+    s_overVoltageFault = false;
+    s_underVoltageFault = false;
     s_commFault = false;
-    s_cellImbalanceFault = false;
-    s_underVoltTime = 0;
-    s_overVoltTime = 0;
-    
-    Serial.println("[PROTECTION] Faults cleared");
 }

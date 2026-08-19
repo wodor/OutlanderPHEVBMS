@@ -1,9 +1,11 @@
 /**
  * @file protection.h
- * @brief Voltage and temperature protection system
+ * @brief Critical-condition safety output supervision
  * 
- * Monitors cell voltages and temperatures against configured limits.
- * Enforces over/under voltage and over/under temperature protection.
+ * Drives the active-HIGH battery-safe-to-use output. This controller owns
+ * only the hard stop conditions: high temperature, no CMU CAN traffic for ten
+ * seconds, or a configured CMU that is absent/stale. Charge/discharge limits
+ * and all other operational policy belong to the T-Panel Battery Emulator.
  */
 #pragma once
 
@@ -15,49 +17,36 @@
 void protectionInit();
 
 /**
- * Check all protection limits
- * Should be called periodically after updating pack statistics
- * 
- * Checks:
- * - Cell overvoltage
- * - Cell undervoltage
- * - Pack overtemperature
- * - Pack undertemperature
- * - Cell voltage delta (imbalance)
- * 
- * @return true if all checks pass, false if any fault detected
+ * Check critical conditions and update the battery-safe-to-use output.
+ *
+ * @return true when the battery-safe-to-use output is HIGH
  */
 bool protectionCheck();
 
 /**
- * Get human-readable protection status string
+ * Get the current critical-condition status string.
  */
 const char* protectionGetStatus();
 
 /**
- * Check if charging should be allowed
- * Considers voltage and temperature limits
+ * Temporarily suppress cell-voltage trips for supervised recovery work.
+ * Temperature and CMU/CAN-loss remain active and non-overridable. This local
+ * override expires automatically after ten minutes.
+ *
+ * @return false unless current CMU data is fresh enough to supervise recovery.
  */
-bool protectionCanCharge();
+bool protectionEnableSupervisedOverride();
+
+/** Cancel a supervised recovery override before its automatic expiry. */
+void protectionCancelSupervisedOverride();
+
+/** Whether the supervised recovery override is currently active. */
+bool protectionSupervisedOverrideActive();
+
+/** Milliseconds remaining in the supervised recovery override. */
+unsigned long protectionSupervisedOverrideRemainingMs();
 
 /**
- * Check if discharging should be allowed
- * Considers voltage and temperature limits
- */
-bool protectionCanDischarge();
-
-/**
- * Enable or disable undervoltage protection at runtime.
- * Disabling also clears any currently latched undervoltage fault.
- */
-void protectionSetUndervoltageEnabled(bool enabled);
-
-/**
- * Check whether undervoltage protection is currently enabled.
- */
-bool protectionIsUndervoltageEnabled();
-
-/**
- * Clear any latched faults
+ * Clear diagnostic flags and re-evaluate on the next check.
  */
 void protectionClearFaults();

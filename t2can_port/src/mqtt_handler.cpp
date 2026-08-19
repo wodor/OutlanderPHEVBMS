@@ -12,13 +12,13 @@
 #include "bms_data.h"
 #include "config.h"
 #include "protection.h"
-#include "simpbms_can.h"
 #include <WiFi.h>
 #include <PubSubClient.h>
 
 namespace {
 constexpr unsigned long CELL_SAMPLE_INTERVAL_MS = 1000;
 constexpr unsigned long CELL_PUBLISH_INTERVAL_MS = 10000;
+constexpr unsigned long BALANCING_COUNT_PUBLISH_INTERVAL_MS = 10000;
 constexpr unsigned long FAST_PUBLISH_INTERVAL_MS = 3000;
 constexpr unsigned long MQTT_RECONNECT_INTERVAL_MS = 5000;
 constexpr int INVALID_CELL_MV = -1;
@@ -41,12 +41,14 @@ String s_lastProtection;
 int s_lastSoc = -1;
 long s_lastPackVoltageMv = -1;
 int s_lastAvgTempTenths = -10000;
+int s_lastMaximumTempTenths = -10000;
 long s_lastCellDeltaMv = -1;
 long s_lastMinimumCellMv = -1;
 long s_lastMaximumCellMv = -1;
 int s_lastBalancingCells = -1;
-long s_lastDesignMaxMv = -1;
-long s_lastDesignMinMv = -1;
+uint32_t s_heartbeatSequence = 0;
+unsigned long s_lastBalancingCountPublish = 0;
+int s_lastModuleMaximumTempTenths[BMS_MODULE_COUNT];
 
 String baseTopic() { return "outlander_bms"; }
 String availabilityTopic() { return baseTopic() + "/status"; }
@@ -68,6 +70,12 @@ String moduleVoltageUniqueId(int moduleIndex) {
     const char bus = moduleIndex < 10 ? 'a' : 'b';
     const int cmuId = (moduleIndex % 10) + 1;
     return "outlander_bms_bus_" + String(bus) + "_cmu_" + String(cmuId) + "_module_voltage";
+}
+
+String moduleMaximumTemperatureUniqueId(int moduleIndex) {
+    const char bus = moduleIndex < 10 ? 'a' : 'b';
+    const int cmuId = (moduleIndex % 10) + 1;
+    return "outlander_bms_bus_" + String(bus) + "_cmu_" + String(cmuId) + "_maximum_temperature";
 }
 
 bool publish(const String& topic, const String& payload, bool retained = true) {
@@ -109,12 +117,11 @@ void publishPackDiscovery() {
     publishDiscovery("outlander_bms_soc", "State of Charge", root + "soc", "%", "battery", "measurement", device, 0);
     publishDiscovery("outlander_bms_pack_voltage", "Pack Voltage", root + "voltage", "V", "voltage", "measurement", device, 2);
     publishDiscovery("outlander_bms_average_temperature", "Average Temperature", root + "average_temperature", "°C", "temperature", "measurement", device, 1);
+    publishDiscovery("outlander_bms_maximum_temperature", "Maximum Temperature", root + "maximum_temperature", "°C", "temperature", "measurement", device, 1);
     publishDiscovery("outlander_bms_all_cell_voltage_delta", "All-Cell Voltage Delta", root + "cell_voltage_delta", "mV", "voltage", "measurement", device, 0);
     publishDiscovery("outlander_bms_minimum_cell_voltage", "Minimum Cell Voltage", root + "minimum_cell_voltage", "V", "voltage", "measurement", device, 3);
     publishDiscovery("outlander_bms_maximum_cell_voltage", "Maximum Cell Voltage", root + "maximum_cell_voltage", "V", "voltage", "measurement", device, 3);
     publishDiscovery("outlander_bms_balancing_cell_count", "Balancing Cell Count", root + "balancing_cell_count", "", "", "measurement", device, 0);
-    publishDiscovery("outlander_bms_design_max_voltage", "Design Maximum Voltage", root + "design_max_voltage", "V", "voltage", "measurement", device, 2);
-    publishDiscovery("outlander_bms_design_min_voltage", "Design Minimum Voltage", root + "design_min_voltage", "V", "voltage", "measurement", device, 2);
     publishDiscovery("outlander_bms_protection_state", "Protection State", root + "protection_state", "", "", "", device);
     s_packDiscoverySent = true;
 }
@@ -134,7 +141,38 @@ void publishModuleDiscovery(int moduleIndex) {
     publishDiscovery(moduleVoltageUniqueId(moduleIndex), "Module Voltage",
                      baseTopic() + "/cmu/" + moduleToken(moduleIndex) + "/module_voltage",
                      "V", "voltage", "measurement", moduleDeviceJson(moduleIndex), 3);
+    publishDiscovery(moduleMaximumTemperatureUniqueId(moduleIndex), "Maximum Temperature",
+                     baseTopic() + "/cmu/" + moduleToken(moduleIndex) + "/maximum_temperature",
+                     "°C", "temperature", "measurement", moduleDeviceJson(moduleIndex), 1);
     s_moduleDiscoverySent[moduleIndex] = true;
+}
+
+bool moduleMaximumTemperatureTenths(int moduleIndex, int& maximumTenths) {
+    const CmuData& cmu = g_bmsState.modules[moduleIndex];
+    bool found = false;
+    maximumTenths = 0;
+    for (int temp = 0; temp < TEMPS_PER_MODULE; ++temp) {
+        const long raw = cmu.temperatures[temp];
+        if (raw <= -70000 || raw >= 100000) continue;
+        const int tenths = static_cast<int>(lroundf(raw / 100.0f));
+        if (!found || tenths > maximumTenths) maximumTenths = tenths;
+        found = true;
+    }
+    return found;
+}
+
+void publishModuleMaximumTemperatures() {
+    for (int module = 0; module < BMS_MODULE_COUNT; ++module) {
+        if (!g_bmsState.modules[module].present) continue;
+        int maximumTenths = 0;
+        if (!moduleMaximumTemperatureTenths(module, maximumTenths)) continue;
+        publishModuleDiscovery(module);
+        if (s_forcePublish || maximumTenths != s_lastModuleMaximumTempTenths[module]) {
+            publish(baseTopic() + "/cmu/" + moduleToken(module) + "/maximum_temperature",
+                    String(maximumTenths / 10.0f, 1));
+            s_lastModuleMaximumTempTenths[module] = maximumTenths;
+        }
+    }
 }
 
 int countBalancingCells() {
@@ -199,10 +237,12 @@ void publishCellMeans() {
 }
 
 void publishFastSummary() {
-    const String root = baseTopic() + "/pack/";
+  const String root = baseTopic() + "/pack/";
+  // Unlike state topics, this is intentionally not retained: subscribers use
+  // its regular arrival as proof that BMS telemetry is still being produced.
+  publish(root + "heartbeat", String(++s_heartbeatSequence), false);
     const long packVoltageMv = lroundf(g_bmsState.packVoltage * 1000.0f);
     const int avgTempTenths = lroundf(g_bmsState.avgTemp * 10.0f);
-    const int balancingCells = countBalancingCells();
     if (s_forcePublish || g_bmsState.soc != s_lastSoc) {
         publish(root + "soc", String(g_bmsState.soc)); s_lastSoc = g_bmsState.soc;
     }
@@ -212,6 +252,14 @@ void publishFastSummary() {
     if (s_forcePublish || avgTempTenths != s_lastAvgTempTenths) {
         publish(root + "average_temperature", String(avgTempTenths / 10.0f, 1)); s_lastAvgTempTenths = avgTempTenths;
     }
+    if (g_bmsState.highestTemp > -70.0f && g_bmsState.highestTemp < 100.0f) {
+        const int maximumTempTenths = lroundf(g_bmsState.highestTemp * 10.0f);
+        if (s_forcePublish || maximumTempTenths != s_lastMaximumTempTenths) {
+            publish(root + "maximum_temperature", String(maximumTempTenths / 10.0f, 1));
+            s_lastMaximumTempTenths = maximumTempTenths;
+        }
+    }
+    publishModuleMaximumTemperatures();
     if (s_forcePublish || g_bmsState.cellVoltageDeltaMv != s_lastCellDeltaMv) {
         publish(root + "cell_voltage_delta", String(g_bmsState.cellVoltageDeltaMv)); s_lastCellDeltaMv = g_bmsState.cellVoltageDeltaMv;
     }
@@ -223,18 +271,13 @@ void publishFastSummary() {
         publish(root + "maximum_cell_voltage", String(g_bmsState.highestCellMv / 1000.0f, 3));
         s_lastMaximumCellMv = g_bmsState.highestCellMv;
     }
-    if (s_forcePublish || balancingCells != s_lastBalancingCells) {
-        publish(root + "balancing_cell_count", String(balancingCells)); s_lastBalancingCells = balancingCells;
-    }
+}
 
-    const SimpBmsDesignVoltageLimits design = simpBmsGetDesignVoltageLimits();
-    const long maxMv = lroundf(design.maxVoltageV * 1000.0f);
-    const long minMv = lroundf(design.minVoltageV * 1000.0f);
-    if (s_forcePublish || maxMv != s_lastDesignMaxMv) {
-        publish(root + "design_max_voltage", String(maxMv / 1000.0f, 1)); s_lastDesignMaxMv = maxMv;
-    }
-    if (s_forcePublish || minMv != s_lastDesignMinMv) {
-        publish(root + "design_min_voltage", String(minMv / 1000.0f, 1)); s_lastDesignMinMv = minMv;
+void publishBalancingCellCount() {
+    const int balancingCells = countBalancingCells();
+    if (balancingCells != s_lastBalancingCells) {
+        publish(baseTopic() + "/pack/balancing_cell_count", String(balancingCells));
+        s_lastBalancingCells = balancingCells;
     }
 }
 
@@ -265,6 +308,7 @@ bool connect() {
 void mqttInit() {
     for (int module = 0; module < BMS_MODULE_COUNT; module++) {
         s_lastModulePublishedMv[module] = INVALID_CELL_MV;
+        s_lastModuleMaximumTempTenths[module] = -10000;
         for (int cell = 0; cell < CELLS_PER_MODULE; cell++) {
             s_lastCellPublishedMv[module][cell] = INVALID_CELL_MV;
         }
@@ -299,6 +343,10 @@ void mqttTick() {
     if (now - s_lastCellPublish >= CELL_PUBLISH_INTERVAL_MS) {
         s_lastCellPublish = now;
         publishCellMeans();
+    }
+    if (now - s_lastBalancingCountPublish >= BALANCING_COUNT_PUBLISH_INTERVAL_MS) {
+        s_lastBalancingCountPublish = now;
+        publishBalancingCellCount();
     }
     s_forcePublish = false;
 }

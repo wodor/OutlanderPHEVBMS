@@ -28,66 +28,23 @@ void test_soc_curve_validation_rejects_invalid_without_mutation();
 void test_cmu_data_init();
 
 // Test functions from test_soc_calc.cpp
-void test_soc_voltage_calculation();
-void test_soc_reset();
-void test_soc_coulomb_counting();
-void test_soc_clamping();
-void test_soc_parallel_strings();
+void test_soc_update_uses_voltage_curve();
 void test_soc_no_data_defaults_to_zero();
 
 // Test functions from test_protection.cpp
-void test_overvoltage_detection();
-void test_undervoltage_detection();
-void test_undervoltage_disable_toggle();
-void test_overtemperature_detection();
-void test_undertemperature_detection();
-void test_cell_imbalance_detection();
-void test_can_charge();
-void test_can_discharge();
-void test_protection_hysteresis();
-void test_fault_clearing();
-void test_comm_fault_no_data();
-
-// Test functions from test_current_sense.cpp
-void test_current_sense_init();
-void test_current_sense_no_sensor();
-void test_current_sense_filtering();
-void test_current_sense_dual_range_inputs();
-void test_current_sense_single_range_input();
-void test_current_sense_get_amps();
-void test_current_sensor_config();
-void test_current_sensor_settings();
-
-// Test functions from test_ess_control.cpp
-void test_settings_precharge_defaults();
-void test_ess_idle_outputs_and_aux_no_start();
-void test_ess_precharge_outputs_on_ac_present();
-void test_ess_contactor_outputs_on_key_on();
-void test_precharge_completes_time_and_current();
-void test_precharge_not_complete_if_current_high();
-void test_precharge_aborts_on_fault();
-void test_charger_permission_integration();
-void test_discharge_permission_integration();
+void test_safety_output_defaults_high();
+void test_safety_output_drops_for_overtemperature();
+void test_safety_output_drops_after_ten_seconds_without_can();
+void test_safety_output_drops_for_stale_selected_cmu();
+void test_voltage_and_cold_temperature_do_not_drop_safety_output();
+void test_safety_output_drops_at_emergency_cell_voltage_limits();
+void test_supervised_override_lifts_voltage_trip_but_not_can_stop();
+void test_supervised_override_expires_after_ten_minutes();
 
 // Test functions from test_safety_critical.cpp
-void test_soc_extreme_current_overflow();
-void test_soc_extreme_discharge_underflow();
-void test_voltage_extreme_values();
-void test_temperature_extreme_values();
-void test_soc_millis_rollover();
-void test_protection_millis_rollover();
-void test_soc_zero_capacity();
-void test_current_sense_zero_conversion();
-void test_pack_voltage_zero_strings();
-void test_soc_float_to_int_overflow();
 void test_module_array_bounds();
 void test_cell_array_bounds();
 void test_temperature_array_bounds();
-void test_concurrent_soc_and_statistics();
-void test_concurrent_protection_and_voltage_update();
-void test_memory_usage();
-void test_no_deep_recursion();
-void test_float_operations_accuracy();
 
 // Unity setUp/tearDown - called before/after each test
 extern unsigned long g_mockMillis;
@@ -127,66 +84,23 @@ int main(int argc, char **argv) {
     RUN_TEST(test_cmu_data_init);
 
     // SOC calculation tests
-    RUN_TEST(test_soc_voltage_calculation);
-    RUN_TEST(test_soc_reset);
-    RUN_TEST(test_soc_coulomb_counting);
-    RUN_TEST(test_soc_clamping);
-    RUN_TEST(test_soc_parallel_strings);
+    RUN_TEST(test_soc_update_uses_voltage_curve);
     RUN_TEST(test_soc_no_data_defaults_to_zero);
 
     // Protection tests
-    RUN_TEST(test_overvoltage_detection);
-    RUN_TEST(test_undervoltage_detection);
-    RUN_TEST(test_undervoltage_disable_toggle);
-    RUN_TEST(test_overtemperature_detection);
-    RUN_TEST(test_undertemperature_detection);
-    RUN_TEST(test_cell_imbalance_detection);
-    RUN_TEST(test_can_charge);
-    RUN_TEST(test_can_discharge);
-    RUN_TEST(test_protection_hysteresis);
-    RUN_TEST(test_fault_clearing);
-    RUN_TEST(test_comm_fault_no_data);
-
-    // Current sense tests
-    RUN_TEST(test_current_sense_init);
-    RUN_TEST(test_current_sense_no_sensor);
-    RUN_TEST(test_current_sense_filtering);
-    RUN_TEST(test_current_sense_dual_range_inputs);
-    RUN_TEST(test_current_sense_single_range_input);
-    RUN_TEST(test_current_sense_get_amps);
-    RUN_TEST(test_current_sensor_config);
-    RUN_TEST(test_current_sensor_settings);
-
-    // ESS control tests
-    RUN_TEST(test_settings_precharge_defaults);
-    RUN_TEST(test_ess_idle_outputs_and_aux_no_start);
-    RUN_TEST(test_ess_precharge_outputs_on_ac_present);
-    RUN_TEST(test_ess_contactor_outputs_on_key_on);
-    RUN_TEST(test_precharge_completes_time_and_current);
-    RUN_TEST(test_precharge_not_complete_if_current_high);
-    RUN_TEST(test_precharge_aborts_on_fault);
-    RUN_TEST(test_charger_permission_integration);
-    RUN_TEST(test_discharge_permission_integration);
+    RUN_TEST(test_safety_output_defaults_high);
+    RUN_TEST(test_safety_output_drops_for_overtemperature);
+    RUN_TEST(test_safety_output_drops_after_ten_seconds_without_can);
+    RUN_TEST(test_safety_output_drops_for_stale_selected_cmu);
+    RUN_TEST(test_voltage_and_cold_temperature_do_not_drop_safety_output);
+    RUN_TEST(test_safety_output_drops_at_emergency_cell_voltage_limits);
+    RUN_TEST(test_supervised_override_lifts_voltage_trip_but_not_can_stop);
+    RUN_TEST(test_supervised_override_expires_after_ten_minutes);
 
     // Safety critical tests
-    RUN_TEST(test_voltage_extreme_values);
-    RUN_TEST(test_soc_extreme_current_overflow);
-    RUN_TEST(test_soc_extreme_discharge_underflow);
-    RUN_TEST(test_temperature_extreme_values);
-    RUN_TEST(test_soc_millis_rollover);
-    RUN_TEST(test_protection_millis_rollover);
-    RUN_TEST(test_soc_zero_capacity);
-    RUN_TEST(test_current_sense_zero_conversion);
-    RUN_TEST(test_pack_voltage_zero_strings);
-    RUN_TEST(test_soc_float_to_int_overflow);
     RUN_TEST(test_module_array_bounds);
     RUN_TEST(test_cell_array_bounds);
     RUN_TEST(test_temperature_array_bounds);
-    RUN_TEST(test_concurrent_soc_and_statistics);
-    RUN_TEST(test_concurrent_protection_and_voltage_update);
-    RUN_TEST(test_memory_usage);
-    RUN_TEST(test_no_deep_recursion);
-    RUN_TEST(test_float_operations_accuracy);
 
     return UNITY_END();
 }

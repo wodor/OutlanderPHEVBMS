@@ -90,12 +90,56 @@ struct CanStats {
     uint8_t  lastInterrupts;      // Last CANINTF register value
     uint8_t  lastStatus;          // Last STATUS register value
     uint32_t lastMessageTime;     // millis() of last received message
+    bool     twaiStatusValid;     // Whether the cached Bus B TWAI status was read successfully
+    uint8_t  twaiState;           // Cached twai_state_t value for Bus B
+    uint32_t twaiTxErrorCounter;
+    uint32_t twaiRxErrorCounter;
+    uint32_t twaiTxFailedCount;
+    uint32_t twaiRxMissedCount;
+    uint32_t twaiArbLostCount;
+    uint32_t twaiBusErrorCount;
+    uint32_t twaiLastStatusTime;  // millis() of the cached Bus B status
+    bool     balanceRecoveryActive;
+    uint32_t balanceRecoveryRemainingMs;
+    uint32_t balanceRecoveryCount;
 };
 
 /**
  * Get current CAN statistics
  */
 CanStats canGetStats();
+
+/** Snapshot of the physical CAN-controller diagnostics used by the web UI. */
+struct CanHardwareDiagnostics {
+    bool spiOk;
+    uint8_t status;
+    uint8_t errorFlags;
+    uint8_t interrupts;
+    uint8_t txErrorCount;
+    uint8_t rxErrorCount;
+};
+
+CanHardwareDiagnostics canGetHardwareDiagnostics();
+
+/**
+ * Start one manual balance-command recovery cycle: send the normal disabled
+ * balance frame for two seconds, then restore balancing. This does not reboot
+ * the controller or claim to reset any CMU.
+ *
+ * @return true when the cycle was started; false when balancing is off or a
+ *         recovery cycle is already in progress.
+ */
+bool canRequestBalanceRecovery();
+
+/**
+ * Service non-blocking CAN state transitions. Call once per main-loop pass.
+ */
+void canTick();
+
+/**
+ * Convert a cached TWAI state value to a stable diagnostic string.
+ */
+const char* canGetTwaiStateName(uint8_t state);
 
 /**
  * Print CAN diagnostic information to serial

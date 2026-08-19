@@ -218,20 +218,8 @@ void test_get_pack_voltage_parallel_strings() {
 void test_settings_defaults() {
     BmsSettings settings;
     
-    // Voltage limits
-    TEST_ASSERT_FLOAT_WITHIN(0.01f, 4.2f, settings.overVoltage);
-    TEST_ASSERT_FLOAT_WITHIN(0.01f, 3.0f, settings.underVoltage);
-    TEST_ASSERT_FLOAT_WITHIN(0.01f, 4.1f, settings.chargeVoltage);
-    TEST_ASSERT_FLOAT_WITHIN(0.01f, 3.2f, settings.dischargeVoltage);
-    
-    // Temperature limits
+    // Critical temperature limit
     TEST_ASSERT_FLOAT_WITHIN(0.1f, 65.0f, settings.overTemp);
-    TEST_ASSERT_FLOAT_WITHIN(0.1f, -10.0f, settings.underTemp);
-    
-    // Battery config
-    TEST_ASSERT_EQUAL_INT(12, settings.seriesCells);
-    TEST_ASSERT_EQUAL_INT(1, settings.parallelStrings);
-    TEST_ASSERT_EQUAL_INT(100, settings.capacityAh);
     
     // SOC curve defaults
     TEST_ASSERT_EQUAL_INT(3500, settings.socVoltageCurve[0]);

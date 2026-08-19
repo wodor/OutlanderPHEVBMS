@@ -33,6 +33,17 @@ static struct can_frame s_txFrame;  // Frame to transmit
 // CAN statistics for diagnostics
 static CanStats s_canStats = {};
 
+// Manual balancing recovery uses the known protocol disable flag for a short,
+// controlled interval. It deliberately does not restart the ESP32 or assert
+// that a CMU has been reset.
+static bool s_balanceRecoveryActive = false;
+static bool s_balanceRecoveryRestoreEnabled = false;
+static uint32_t s_balanceRecoveryEndsAt = 0;
+static uint32_t s_balanceRecoveryCount = 0;
+static constexpr uint32_t BALANCE_RECOVERY_DISABLE_MS = 2000;
+static uint32_t s_lastTwaiStatusTime = 0;
+static constexpr uint32_t TWAI_STATUS_REFRESH_MS = 500;
+
 // =============================================================================
 // PRIVATE HELPER FUNCTIONS
 // =============================================================================
@@ -145,6 +156,29 @@ static void processFrame(uint32_t canId, uint8_t dlc, uint8_t* data, int busInde
     }
 }
 
+static void refreshTwaiStatus() {
+    s_canStats.twaiStatusValid = false;
+    s_canStats.twaiLastStatusTime = millis();
+
+    if (!s_twaiEnabled) {
+        return;
+    }
+
+    twai_status_info_t twaiStatus = {};
+    if (twai_get_status_info(&twaiStatus) != ESP_OK) {
+        return;
+    }
+
+    s_canStats.twaiStatusValid = true;
+    s_canStats.twaiState = static_cast<uint8_t>(twaiStatus.state);
+    s_canStats.twaiTxErrorCounter = twaiStatus.tx_error_counter;
+    s_canStats.twaiRxErrorCounter = twaiStatus.rx_error_counter;
+    s_canStats.twaiTxFailedCount = twaiStatus.tx_failed_count;
+    s_canStats.twaiRxMissedCount = twaiStatus.rx_missed_count;
+    s_canStats.twaiArbLostCount = twaiStatus.arb_lost_count;
+    s_canStats.twaiBusErrorCount = twaiStatus.bus_error_count;
+}
+
 // =============================================================================
 // PUBLIC API IMPLEMENTATION
 // =============================================================================
@@ -195,6 +229,7 @@ bool canInit() {
         if (twai_start() == ESP_OK) {
             Serial.println("[CAN-B] TWAI driver started");
             s_twaiEnabled = true;
+            refreshTwaiStatus();
         } else {
             Serial.println("[CAN-B] ERROR: Failed to start TWAI driver!");
         }
@@ -262,7 +297,29 @@ void canPoll() {
                 processFrame(twaiMsg.identifier, twaiMsg.data_length_code, twaiMsg.data, 1);
             }
         }
+
+        if (millis() - s_lastTwaiStatusTime >= TWAI_STATUS_REFRESH_MS) {
+            s_lastTwaiStatusTime = millis();
+            refreshTwaiStatus();
+        }
     }
+}
+
+void canTick() {
+    if (!s_balanceRecoveryActive) {
+        return;
+    }
+
+    if (static_cast<int32_t>(millis() - s_balanceRecoveryEndsAt) < 0) {
+        return;
+    }
+
+    s_balanceRecoveryActive = false;
+    if (s_balanceRecoveryRestoreEnabled) {
+        g_bmsState.balancingEnabled = true;
+        Serial.println("[CAN] Balance recovery pulse complete; balancing restored");
+    }
+    s_balanceRecoveryRestoreEnabled = false;
 }
 
 void canSendBalanceCommand() {
@@ -271,7 +328,12 @@ void canSendBalanceCommand() {
     g_bmsState.updatePackStatistics();
     const long balanceTargetMv = g_bmsState.balanceTargetMv;
 
-    if (g_bmsState.balancingEnabled &&
+    // Keep the recovery pulse authoritative even if another interface toggles
+    // the operator-facing balancing flag while the pulse is in progress.
+    const bool balancingCommandEnabled =
+        g_bmsState.balancingEnabled && !s_balanceRecoveryActive;
+
+    if (balancingCommandEnabled &&
         balanceTargetMv >= 1500 && balanceTargetMv <= 4500) {
         // highByte/lowByte split a 16-bit value into two bytes
         s_txFrame.data[0] = highByte(balanceTargetMv);
@@ -289,22 +351,22 @@ void canSendBalanceCommand() {
 
     // Send to Bus A (MCP2515) if it's assigned to CMUs
     if (g_bmsSettings.useBusAForCmu && g_bmsSettings.expectedCmusA != 0) {
-        if (g_bmsState.balancingEnabled) {
+        if (balancingCommandEnabled) {
             s_canStats.balanceTxAttempts++;
             s_canStats.lastBalanceBusMask |= 0x01;
         }
-        if (canSendFrame(s_txFrame, 0) && g_bmsState.balancingEnabled) {
+        if (canSendFrame(s_txFrame, 0) && balancingCommandEnabled) {
             s_canStats.balanceTxQueued++;
         }
     }
 
     // Send to Bus B (TWAI) if enabled and assigned to CMUs
     if (s_twaiEnabled && g_bmsSettings.expectedCmusB != 0) {
-        if (g_bmsState.balancingEnabled) {
+        if (balancingCommandEnabled) {
             s_canStats.balanceTxAttempts++;
             s_canStats.lastBalanceBusMask |= 0x02;
         }
-        if (canSendFrame(s_txFrame, 1) && g_bmsState.balancingEnabled) {
+        if (canSendFrame(s_txFrame, 1) && balancingCommandEnabled) {
             s_canStats.balanceTxQueued++;
         }
     }
@@ -350,7 +412,49 @@ bool canIsBusBEnabled() {
 }
 
 CanStats canGetStats() {
-    return s_canStats;
+    CanStats stats = s_canStats;
+    stats.balanceRecoveryActive = s_balanceRecoveryActive;
+    stats.balanceRecoveryCount = s_balanceRecoveryCount;
+    stats.balanceRecoveryRemainingMs = s_balanceRecoveryActive
+        ? static_cast<uint32_t>(s_balanceRecoveryEndsAt - millis())
+        : 0;
+    return stats;
+}
+
+CanHardwareDiagnostics canGetHardwareDiagnostics() {
+    CanHardwareDiagnostics diagnostics = {};
+    diagnostics.status = s_canA.getStatus();
+    diagnostics.errorFlags = s_canA.getErrorFlags();
+    diagnostics.interrupts = s_canA.getInterrupts();
+    diagnostics.txErrorCount = s_canA.errorCountTX();
+    diagnostics.rxErrorCount = s_canA.errorCountRX();
+    diagnostics.spiOk = (diagnostics.status != 0xFF) ||
+                        (diagnostics.errorFlags != 0xFF);
+    return diagnostics;
+}
+
+bool canRequestBalanceRecovery() {
+    if (!g_bmsState.balancingEnabled || s_balanceRecoveryActive) {
+        return false;
+    }
+
+    s_balanceRecoveryRestoreEnabled = true;
+    s_balanceRecoveryActive = true;
+    s_balanceRecoveryEndsAt = millis() + BALANCE_RECOVERY_DISABLE_MS;
+    s_balanceRecoveryCount++;
+    g_bmsState.balancingEnabled = false;
+    Serial.println("[CAN] Balance recovery pulse started: disabling commands for 2 seconds");
+    return true;
+}
+
+const char* canGetTwaiStateName(uint8_t state) {
+    switch (state) {
+        case TWAI_STATE_STOPPED: return "STOPPED";
+        case TWAI_STATE_RUNNING: return "RUNNING";
+        case TWAI_STATE_BUS_OFF: return "BUS_OFF";
+        case TWAI_STATE_RECOVERING: return "RECOVERING";
+        default: return "UNKNOWN";
+    }
 }
 
 bool canVerifySpiComm() {
@@ -424,17 +528,16 @@ void canPrintDiagnostics() {
     Serial.println();
     Serial.println("Bus B (Internal TWAI):");
     if (s_twaiEnabled) {
-        twai_status_info_t twaiStatus;
-        if (twai_get_status_info(&twaiStatus) == ESP_OK) {
-            Serial.printf("  State:    %s\n",
-                (twaiStatus.state == TWAI_STATE_RUNNING) ? "RUNNING" :
-                (twaiStatus.state == TWAI_STATE_BUS_OFF) ? "BUS-OFF" : "STOPPED/RECOVERING");
-            Serial.printf("  TX Err:   %d\n", twaiStatus.tx_error_counter);
-            Serial.printf("  RX Err:   %d\n", twaiStatus.rx_error_counter);
-            Serial.printf("  TX Failed: %d\n", twaiStatus.tx_failed_count);
-            Serial.printf("  RX Miss:  %d\n", twaiStatus.rx_missed_count);
-            Serial.printf("  ARB Lost: %d\n", twaiStatus.arb_lost_count);
-            Serial.printf("  Bus Err:  %d\n", twaiStatus.bus_error_count);
+        refreshTwaiStatus();
+        const CanStats stats = canGetStats();
+        if (stats.twaiStatusValid) {
+            Serial.printf("  State:    %s\n", canGetTwaiStateName(stats.twaiState));
+            Serial.printf("  TX Err:   %u\n", stats.twaiTxErrorCounter);
+            Serial.printf("  RX Err:   %u\n", stats.twaiRxErrorCounter);
+            Serial.printf("  TX Failed: %u\n", stats.twaiTxFailedCount);
+            Serial.printf("  RX Miss:  %u\n", stats.twaiRxMissedCount);
+            Serial.printf("  ARB Lost: %u\n", stats.twaiArbLostCount);
+            Serial.printf("  Bus Err:  %u\n", stats.twaiBusErrorCount);
         } else {
             Serial.println("  ERROR: Failed to get TWAI status");
         }

@@ -6,7 +6,6 @@
 #include "serial_menu.h"
 #include "config.h"
 #include "bms_data.h"
-#include "soc_calc.h"
 #include "protection.h"
 #include "can_handler.h"
 
@@ -37,19 +36,19 @@ static void handleCommand(char cmd) {
             Serial.println(g_bmsState.debugMode ? "ON (showing raw CAN frames)" : "OFF");
             break;
 
-        case 'v':  // Toggle undervoltage protection
-            Serial.println();
-            protectionSetUndervoltageEnabled(!protectionIsUndervoltageEnabled());
-            break;
-
         case 'r':  // Show full report
             printFullReport();
             break;
 
-        case 'R':  // Reset SOC to 100%
+        case 'o':
             Serial.println();
-            Serial.println("[CMD] Resetting SOC to 100%");
-            socReset(100);
+            if (protectionEnableSupervisedOverride()) {
+                Serial.println("[CMD] Cell-voltage trips bypassed for 10 minutes only. Temperature and CMU/CAN trips remain active.");
+            }
+            break;
+
+        case 'O':
+            protectionCancelSupervisedOverride();
             break;
 
         case 's':  // Show detailed statistics
@@ -102,9 +101,9 @@ static void handleCommand(char cmd) {
             Serial.println("  A - Set Bus A expected CMUs mask (hex)");
             Serial.println("  B - Set Bus B expected CMUs mask (hex)");
             Serial.println("  d - Toggle debug mode (show raw CAN)");
-            Serial.println("  v - Toggle undervoltage protection");
             Serial.println("  r - Show full report");
-            Serial.println("  R - Reset SOC to 100%");
+            Serial.println("  o - Enable 10-minute supervised cell-voltage recovery override");
+            Serial.println("  O - Cancel the supervised recovery override now");
             Serial.println("  s - Show detailed statistics");
             Serial.println("  h - Show this help");
             break;
@@ -178,9 +177,9 @@ static void printFullReport() {
 
     Serial.println("║  SUMMARY                                                                  ║");
     Serial.println("╟───────────────────────────────────────────────────────────────────────────╢");
-    Serial.printf("║  CAN: %-7s SOC: %3d%%  Pack: %6.2fV  Current: %+7.2fA (avg %+7.2fA)  ║\n",
-                  canStatus, g_bmsState.soc, g_bmsState.packVoltage, 
-                  g_bmsState.currentAmps, g_bmsState.avgCurrentAmps);
+    Serial.printf("║  CAN: %-7s SOC: %3d%%  Pack: %6.2fV  Safety: %-20s  ║\n",
+                  canStatus, g_bmsState.soc, g_bmsState.packVoltage,
+                  protectionGetStatus());
     Serial.printf("║  Cells: %4ld-%4ldmV (d%4ldmV)  Avg: %.3fV  Temp: %5.1f/%5.1f/%5.1fC    ║\n",
                   g_bmsState.lowestCellMv, g_bmsState.highestCellMv,
                   g_bmsState.highestCellMv - g_bmsState.lowestCellMv,
@@ -191,10 +190,6 @@ static void printFullReport() {
                   g_bmsState.balancingEnabled ? "ON" : "OFF",
                   balancingCount,
                   protectionGetStatus());
-    Serial.printf("║  UV protection: %-3s  Limits: fault < %.2fV, discharge < %.2fV              ║\n",
-                  protectionIsUndervoltageEnabled() ? "ON" : "OFF",
-                  g_bmsSettings.underVoltage,
-                  g_bmsSettings.dischargeVoltage);
     Serial.println("╠═══════════════════════════════════════════════════════════════════════════╣");
     Serial.println("║  MODULES                                                                  ║");
 

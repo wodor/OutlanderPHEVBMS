@@ -31,10 +31,7 @@
 #include "wifi_handler.h"
 #include "web_server.h"
 #include "soc_calc.h"
-#include "current_sense.h"
 #include "protection.h"
-#include "ess_control.h"
-#include "simpbms_can.h"
 #include "mqtt_handler.h"
 
 // =============================================================================
@@ -62,24 +59,21 @@ static unsigned long s_lastCanSendTime = 0;
 static unsigned long s_lastDisplayTime = 0;
 static unsigned long s_lastWifiPollTime = 0;
 static unsigned long s_lastSocUpdateTime = 0;
-static unsigned long s_lastCurrentUpdateTime = 0;
 static unsigned long s_lastProtectionCheckTime = 0;
-static unsigned long s_lastSocSaveTime = 0;
-static unsigned long s_lastEssTickTime = 0;
-static unsigned long s_lastSimpBmsSendTime = 0;
 
 // Interval constants
 constexpr unsigned long INTERVAL_SOC_UPDATE_MS = 100;        // Update SOC every 100ms
-constexpr unsigned long INTERVAL_CURRENT_UPDATE_MS = 50;     // Read current every 50ms
 constexpr unsigned long INTERVAL_PROTECTION_CHECK_MS = 500;  // Check protection every 500ms
-constexpr unsigned long INTERVAL_SOC_SAVE_MS = 60000;        // Save SOC every 60 seconds
-constexpr unsigned long INTERVAL_ESS_TICK_MS = 500;          // ESS control tick every 500ms
-constexpr unsigned long INTERVAL_SIMPBMS_SEND_MS = 200;       // SIMPBMS CAN output interval
 
 // =============================================================================
 // SETUP
 // =============================================================================
 void setup() {
+    // Assert the sole permissive output before USB enumeration or any network
+    // startup delay. A critical check later takes it low when warranted.
+    pinMode(PIN_BATTERY_SAFE_TO_USE, OUTPUT);
+    digitalWrite(PIN_BATTERY_SAFE_TO_USE, HIGH);
+
     /**
      * EMBEDDED CONCEPT: Serial Initialization
      * ---------------------------------------
@@ -109,10 +103,16 @@ void setup() {
     // Load settings from NVS
     settingsLoad();
 
+    // Assert the sole permissive output early. The periodic safety check takes
+    // it low after the 10-second CMU CAN grace period or immediately for high
+    // temperature once data exists.
+    protectionInit();
+
     // Initialize CAN bus
     if (!canInit()) {
         Serial.println("FATAL: CAN initialization failed!");
         Serial.println("Check hardware connections and restart.");
+        digitalWrite(PIN_BATTERY_SAFE_TO_USE, LOW);
 
         /**
          * EMBEDDED CONCEPT: Halt on Fatal Error
@@ -136,21 +136,9 @@ void setup() {
     Serial.println();
     Serial.println("Initializing V2 features...");
     
-    // Initialize current sensing
-    currentSenseInit();
-    
     // Initialize SOC calculation
     socInit();
     
-    // Initialize protection system
-    protectionInit();
-    
-    // Initialize ESS control (precharge, contactor, charger)
-    essInit();
-
-    // Initialize SIMPBMS CAN output
-    simpBmsInit();
-
     // Home Assistant MQTT Discovery integration.
     mqttInit();
 
@@ -192,6 +180,9 @@ void loop() {
     //    This reads all available messages and updates g_bmsState
     canPoll();
 
+    // Complete any requested non-blocking balance disable/re-enable pulse.
+    canTick();
+
     // 3. Periodic task: Send balance command every 400ms
     if (millis() - s_lastCanSendTime >= INTERVAL_CAN_SEND_MS) {
         s_lastCanSendTime = millis();
@@ -210,42 +201,16 @@ void loop() {
         wifiPoll();
     }
 
-    // 6. Periodic task: Update current sensing every 50ms
-    if (millis() - s_lastCurrentUpdateTime >= INTERVAL_CURRENT_UPDATE_MS) {
-        s_lastCurrentUpdateTime = millis();
-        currentSenseUpdate();
-    }
-
-    // 7. Periodic task: Update SOC calculation every 100ms
+    // 6. Periodic task: Update SOC calculation every 100ms
     if (millis() - s_lastSocUpdateTime >= INTERVAL_SOC_UPDATE_MS) {
         s_lastSocUpdateTime = millis();
         socUpdate();
     }
 
-    // 8. Periodic task: Check protection limits every 500ms
+    // 7. Periodic task: Check the three critical safety conditions every 500ms
     if (millis() - s_lastProtectionCheckTime >= INTERVAL_PROTECTION_CHECK_MS) {
         s_lastProtectionCheckTime = millis();
         protectionCheck();
-    }
-
-    // 9. Periodic task: ESS control tick every 500ms
-    if (millis() - s_lastEssTickTime >= INTERVAL_ESS_TICK_MS) {
-        s_lastEssTickTime = millis();
-        essTick();
-    }
-
-    // 10. Periodic task: Save SOC to NVS every 60 seconds
-    if (millis() - s_lastSocSaveTime >= INTERVAL_SOC_SAVE_MS) {
-        s_lastSocSaveTime = millis();
-        if (g_bmsState.socInitialized) {
-            socSave();
-        }
-    }
-
-    // 11. Periodic task: SIMPBMS CAN output
-    if (millis() - s_lastSimpBmsSendTime >= INTERVAL_SIMPBMS_SEND_MS) {
-        s_lastSimpBmsSendTime = millis();
-        simpBmsTick();
     }
 
     /**

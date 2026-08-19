@@ -4,9 +4,12 @@
  *
  * REST API endpoints:
  *   GET  /api/bms       - Full BMS state (all modules)
- *   GET  /api/module/N  - Single module data (N = 1-8)
- *   GET  /api/summary   - Pack summary (lowest cell, balancing status)
+ *   GET  /api/module/N  - Single module data (N = 1-20)
+ *   GET  /api/summary   - Pack summary and safety state
+ *   GET  /api/help      - Serial command to web API mapping
  *   POST /api/balancing - Toggle balancing on/off
+ *   POST /api/balancing/restart - Send a 2-second balance-disable pulse
+ *   POST /api/command   - Execute any serial command via the web UI/API
  *   POST /api/reboot    - Acknowledge, then reboot the device
  *   GET  /              - HTML dashboard
  */
@@ -16,8 +19,6 @@
 #include "config.h"
 #include "bms_data.h"
 #include "protection.h"
-#include "ess_control.h"
-#include "simpbms_can.h"
 #include "can_handler.h"
 #include <ESPAsyncWebServer.h>
 #include <freertos/FreeRTOS.h>
@@ -79,6 +80,15 @@ static String buildModuleJson(int moduleIndex) {
     }
     json += "],";
 
+    long maximumTemperatureRaw = -70000;
+    for (int i = 0; i < TEMPS_PER_MODULE; ++i) {
+        const long raw = cmu.temperatures[i];
+        if (raw > -70000 && raw < 100000 && raw > maximumTemperatureRaw) maximumTemperatureRaw = raw;
+    }
+    json += "\"maximumTemperature\":";
+    json += maximumTemperatureRaw > -70000 ? String(maximumTemperatureRaw / 1000.0f, 1) : "null";
+    json += ",";
+
     // Balance status bitmask and array
     json += "\"balanceStatus\":" + String(cmu.balanceStatus) + ",";
     json += "\"balancing\":[";
@@ -96,7 +106,6 @@ static String buildModuleJson(int moduleIndex) {
  * Build JSON for all modules.
  */
 static String buildFullBmsJson() {
-    const SimpBmsDesignVoltageLimits designLimits = simpBmsGetDesignVoltageLimits();
     String json = "{";
     json += "\"modules\":[";
 
@@ -110,10 +119,6 @@ static String buildFullBmsJson() {
     json += "\"highestCellMv\":" + String(g_bmsState.highestCellMv) + ",";
     json += "\"medianCellMv\":" + String(g_bmsState.medianCellMv) + ",";
     json += "\"cellVoltageDeltaMv\":" + String(g_bmsState.cellVoltageDeltaMv) + ",";
-    json += "\"simpBmsEnabled\":" + String(g_bmsSettings.simpBmsEnabled ? "true" : "false") + ",";
-    json += "\"simpBmsMaxDesignVoltageV\":" + String(designLimits.maxVoltageV, 1) + ",";
-    json += "\"simpBmsMinDesignVoltageV\":" + String(designLimits.minVoltageV, 1) + ",";
-    json += "\"simpBmsSeriesCells\":" + String(designLimits.seriesCells) + ",";
     json += "\"balancingEnabled\":" + String(g_bmsState.balancingEnabled ? "true" : "false") + ",";
     json += "\"balanceTargetMv\":" + String(g_bmsState.balancingEnabled ? g_bmsState.balanceTargetMv : 0);
     json += "}";
@@ -122,7 +127,7 @@ static String buildFullBmsJson() {
 }
 
 /**
- * Build JSON summary with V2 features.
+ * Build the full summary and safety state JSON.
  */
 static String buildSummaryJson() {
     int presentCount = 0;
@@ -152,16 +157,7 @@ static String buildSummaryJson() {
         ? (millis() - g_bmsState.lastCanMessageTime)
         : 999999;
 
-    // Read IO states (active HIGH)
-    const bool acPresent = digitalRead(PIN_INPUT_AC_PRESENT) == HIGH;
-    const bool keyOn = digitalRead(PIN_INPUT_KEY_ON) == HIGH;
-    const bool auxIn = digitalRead(PIN_INPUT_AUX) == HIGH;
-    const bool outMain = digitalRead(PIN_OUT_CONTACTOR_MAIN) == HIGH;
-    const bool outPrecharge = digitalRead(PIN_OUT_PRECHARGE) == HIGH;
-    const bool outNeg = digitalRead(PIN_OUT_CONTACTOR_NEG) == HIGH;
-    const bool outCharger = digitalRead(PIN_OUT_CHARGER_EN) == HIGH;
-    const bool outDischarge = digitalRead(PIN_OUT_DISCHARGE_EN) == HIGH;
-    const SimpBmsDesignVoltageLimits designLimits = simpBmsGetDesignVoltageLimits();
+    const bool batterySafeToUse = digitalRead(PIN_BATTERY_SAFE_TO_USE) == HIGH;
     const CanStats canStats = canGetStats();
 
     String json = "{";
@@ -176,19 +172,13 @@ static String buildSummaryJson() {
     json += "\"highestTemp\":" + String(g_bmsState.highestTemp, 1) + ",";
     json += "\"avgTemp\":" + String(g_bmsState.avgTemp, 1) + ",";
     json += "\"soc\":" + String(g_bmsState.soc) + ",";
-    json += "\"currentAmps\":" + String(g_bmsState.currentAmps, 2) + ",";
-    json += "\"avgCurrentAmps\":" + String(g_bmsState.avgCurrentAmps, 2) + ",";
-    json += "\"simpBmsEnabled\":" + String(g_bmsSettings.simpBmsEnabled ? "true" : "false") + ",";
-    json += "\"simpBmsMaxDesignVoltageV\":" + String(designLimits.maxVoltageV, 1) + ",";
-    json += "\"simpBmsMinDesignVoltageV\":" + String(designLimits.minVoltageV, 1) + ",";
-    json += "\"simpBmsSeriesCells\":" + String(designLimits.seriesCells) + ",";
     json += "\"balancingEnabled\":" + String(g_bmsState.balancingEnabled ? "true" : "false") + ",";
     json += "\"balanceTargetMv\":" + String(g_bmsState.balancingEnabled ? g_bmsState.balanceTargetMv : 0) + ",";
     json += "\"cellsBalancing\":" + String(balancingCount) + ",";
     json += "\"protectionStatus\":\"" + String(protectionGetStatus()) + "\",";
-    json += "\"essState\":\"" + String(essGetStateName()) + "\",";
-    json += "\"contactorClosed\":" + String(essIsContactorClosed() ? "true" : "false") + ",";
-    json += "\"chargerEnabled\":" + String(g_bmsState.chargerEnabled ? "true" : "false") + ",";
+    json += "\"debugMode\":" + String(g_bmsState.debugMode ? "true" : "false") + ",";
+    json += "\"supervisedOverrideActive\":" + String(protectionSupervisedOverrideActive() ? "true" : "false") + ",";
+    json += "\"supervisedOverrideRemainingMs\":" + String(protectionSupervisedOverrideRemainingMs()) + ",";
     json += "\"msSinceCanMsg\":" + String(msSinceCan) + ",";
     json += "\"uptimeMs\":" + String(millis()) + ",";
     json += "\"balanceTxAttempts\":" + String(canStats.balanceTxAttempts) + ",";
@@ -196,28 +186,114 @@ static String buildSummaryJson() {
     json += "\"lastBalanceTargetMv\":" + String(canStats.lastBalanceTargetMv) + ",";
     json += "\"lastBalanceBusMask\":" + String(canStats.lastBalanceBusMask) + ",";
     json += "\"msSinceBalanceCommand\":" + String(canStats.lastBalanceCommandTime > 0 ? millis() - canStats.lastBalanceCommandTime : 0) + ",";
+    json += "\"balanceRecovery\":{";
+    json += "\"active\":" + String(canStats.balanceRecoveryActive ? "true" : "false") + ",";
+    json += "\"remainingMs\":" + String(canStats.balanceRecoveryRemainingMs) + ",";
+    json += "\"count\":" + String(canStats.balanceRecoveryCount);
+    json += "},";
+    json += "\"twai\":{";
+    json += "\"enabled\":" + String(canIsBusBEnabled() ? "true" : "false") + ",";
+    json += "\"statusValid\":" + String(canStats.twaiStatusValid ? "true" : "false") + ",";
+    json += "\"state\":\"" + String(canStats.twaiStatusValid ? canGetTwaiStateName(canStats.twaiState) : "UNAVAILABLE") + "\",";
+    json += "\"txErrorCounter\":" + String(canStats.twaiTxErrorCounter) + ",";
+    json += "\"rxErrorCounter\":" + String(canStats.twaiRxErrorCounter) + ",";
+    json += "\"txFailedCount\":" + String(canStats.twaiTxFailedCount) + ",";
+    json += "\"rxMissedCount\":" + String(canStats.twaiRxMissedCount) + ",";
+    json += "\"arbLostCount\":" + String(canStats.twaiArbLostCount) + ",";
+    json += "\"busErrorCount\":" + String(canStats.twaiBusErrorCount);
+    json += "},";
     json += "\"hasData\":" + String(presentCount > 0 ? "true" : "false") + ",";
     json += "\"expectedTotal\":" + String(expectedCount) + ",";
     json += "\"expectedCmusA\":" + String(g_bmsSettings.expectedCmusA) + ",";
     json += "\"expectedCmusB\":" + String(g_bmsSettings.expectedCmusB) + ",";
-    json += "\"io\":{";
-    json += "\"inputs\":{";
-    json += "\"acPresent\":" + String(acPresent ? "true" : "false") + ",";
-    json += "\"keyOn\":" + String(keyOn ? "true" : "false") + ",";
-    json += "\"auxIn\":" + String(auxIn ? "true" : "false") + ",";
-    json += "\"curLowAmps\":" + String(g_bmsState.currentSenseLowAmps, 2) + ",";
-    json += "\"curHighAmps\":" + String(g_bmsState.currentSenseHighAmps, 2);
-    json += "},";
-    json += "\"outputs\":{";
-    json += "\"main\":" + String(outMain ? "true" : "false") + ",";
-    json += "\"precharge\":" + String(outPrecharge ? "true" : "false") + ",";
-    json += "\"negContactor\":" + String(outNeg ? "true" : "false") + ",";
-    json += "\"chargerEn\":" + String(outCharger ? "true" : "false") + ",";
-    json += "\"dischargeEn\":" + String(outDischarge ? "true" : "false");
-    json += "}}";
+    json += "\"io\":{\"batterySafeToUse\":" + String(batterySafeToUse ? "true" : "false") + "}";
     json += "}";
 
     return json;
+}
+
+static String buildReportJson() {
+    return "{\"bms\":" + buildFullBmsJson() +
+           ",\"summary\":" + buildSummaryJson() + "}";
+}
+
+static String buildDetailedStatsJson() {
+    g_bmsState.updatePackStatistics();
+    String json = "{\"balancingEnabled\":" +
+                  String(g_bmsState.balancingEnabled ? "true" : "false") +
+                  ",\"modules\":[";
+    bool firstModule = true;
+    for (int module = 0; module < BMS_MODULE_COUNT; ++module) {
+        const CmuData& cmu = g_bmsState.modules[module];
+        if (!cmu.present) continue;
+        if (!firstModule) json += ",";
+        firstModule = false;
+        json += "{\"bus\":\"" + String(module < 10 ? "A" : "B") +
+                "\",\"cmuId\":" + String((module % 10) + 1) +
+                ",\"balanceStatus\":" + String(cmu.balanceStatus) +
+                ",\"voltages\":[";
+        for (int cell = 0; cell < CELLS_PER_MODULE; ++cell) {
+            if (cell) json += ",";
+            json += String(cmu.voltages[cell]);
+        }
+        json += "],\"temperatures\":[";
+        for (int temp = 0; temp < TEMPS_PER_MODULE; ++temp) {
+            if (temp) json += ",";
+            json += String(cmu.temperatures[temp] / 1000.0f, 1);
+        }
+        json += "]}";
+    }
+    json += "],\"summary\":" + buildSummaryJson() + "}";
+    return json;
+}
+
+static String buildCanDiagnosticsJson() {
+    const CanStats stats = canGetStats();
+    const CanHardwareDiagnostics hardware = canGetHardwareDiagnostics();
+    String json = "{";
+    json += "\"spiOk\":" + String(hardware.spiOk ? "true" : "false") + ",";
+    json += "\"mcp2515\":{";
+    json += "\"status\":" + String(hardware.status) + ",";
+    json += "\"errorFlags\":" + String(hardware.errorFlags) + ",";
+    json += "\"interrupts\":" + String(hardware.interrupts) + ",";
+    json += "\"txErrorCount\":" + String(hardware.txErrorCount) + ",";
+    json += "\"rxErrorCount\":" + String(hardware.rxErrorCount) + "},";
+    json += "\"twai\":{";
+    json += "\"enabled\":" + String(canIsBusBEnabled() ? "true" : "false") + ",";
+    json += "\"statusValid\":" + String(stats.twaiStatusValid ? "true" : "false") + ",";
+    json += "\"state\":\"" + String(stats.twaiStatusValid ? canGetTwaiStateName(stats.twaiState) : "UNAVAILABLE") + "\",";
+    json += "\"txErrorCounter\":" + String(stats.twaiTxErrorCounter) + ",";
+    json += "\"rxErrorCounter\":" + String(stats.twaiRxErrorCounter) + ",";
+    json += "\"txFailedCount\":" + String(stats.twaiTxFailedCount) + ",";
+    json += "\"rxMissedCount\":" + String(stats.twaiRxMissedCount) + ",";
+    json += "\"arbLostCount\":" + String(stats.twaiArbLostCount) + ",";
+    json += "\"busErrorCount\":" + String(stats.twaiBusErrorCount) + "},";
+    json += "\"messagesReceived\":" + String(stats.messagesReceived) + ",";
+    json += "\"messagesDecoded\":" + String(stats.messagesDecoded) + ",";
+    json += "\"readAttempts\":" + String(stats.readAttempts) + ",";
+    json += "\"txAttempts\":" + String(stats.txAttempts) + ",";
+    json += "\"txSuccess\":" + String(stats.txSuccess) + ",";
+    json += "\"balanceTxAttempts\":" + String(stats.balanceTxAttempts) + ",";
+    json += "\"balanceTxQueued\":" + String(stats.balanceTxQueued) + ",";
+    json += "\"lastBalanceTargetMv\":" + String(stats.lastBalanceTargetMv) + ",";
+    json += "\"lastBalanceBusMask\":" + String(stats.lastBalanceBusMask) + ",";
+    json += "\"lastMessageTime\":" + String(stats.lastMessageTime) + ",";
+    json += "\"lastBalanceCommandTime\":" + String(stats.lastBalanceCommandTime);
+    json += "}";
+    return json;
+}
+
+static String buildHelpJson() {
+    return "{\"commands\":["
+           "{\"serial\":\"b\",\"web\":\"POST /api/command command=b\",\"description\":\"Toggle balancing\"},"
+           "{\"serial\":\"d\",\"web\":\"POST /api/command command=d\",\"description\":\"Toggle raw-CAN debug mode\"},"
+           "{\"serial\":\"r\",\"web\":\"POST /api/command command=r\",\"description\":\"Full BMS report\"},"
+           "{\"serial\":\"o\",\"web\":\"POST /api/command command=o\",\"description\":\"Enable 10-minute supervised voltage recovery override\"},"
+           "{\"serial\":\"O\",\"web\":\"POST /api/command command=O\",\"description\":\"Cancel supervised recovery override\"},"
+           "{\"serial\":\"s\",\"web\":\"POST /api/command command=s\",\"description\":\"Detailed module statistics\"},"
+           "{\"serial\":\"c\",\"web\":\"POST /api/command command=c\",\"description\":\"CAN diagnostics\"},"
+           "{\"serial\":\"A/B\",\"web\":\"POST /api/command command=A|B&mask=HEX\",\"description\":\"Set expected CMU mask\"},"
+           "{\"serial\":\"h/?\",\"web\":\"GET /api/help or POST /api/command command=h\",\"description\":\"Show command help\"}]}";
 }
 
 // =============================================================================
@@ -265,7 +341,7 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
         .io-item { background: #0b1220; border-radius: 6px; padding: 8px; text-align: center; }
         .io-label { display: block; font-size: 0.75em; color: #94a3b8; margin-bottom: 4px; }
         .io-value { font-weight: bold; color: #6b7280; }
-        .ess-summary {
+        .safety-summary {
             background: #121b34;
             padding: 12px 20px;
             border-radius: 8px;
@@ -347,6 +423,9 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             gap: 12px;
             margin-top: 20px;
         }
+        .mask-control { display: inline-flex; align-items: center; gap: 6px; color: #cbd5e1; font-size: 0.85em; }
+        .mask-control input { width: 4.5em; padding: 8px 6px; border: 1px solid #475569; border-radius: 4px; background: #0f172a; color: #f8fafc; text-transform: uppercase; }
+        .mask-control button { padding: 8px 12px; font-size: 0.85em; }
         button {
             background: #4ade80;
             color: #000;
@@ -361,27 +440,35 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
         button.off { background: #6b7280; color: #fff; }
         button.danger { background: #dc2626; color: #fff; }
         button.danger:hover { background: #b91c1c; }
+        button.recovery { background: #f59e0b; color: #111827; }
+        button.recovery:hover { background: #d97706; }
         button:disabled { cursor: wait; opacity: 0.65; }
         .status { text-align: center; margin-top: 10px; color: #666; font-size: 0.85em; }
         .uptime { margin-top: 2px; }
         .error { color: #ef4444; }
+        .command-output {
+            width: 100%;
+            box-sizing: border-box;
+            min-height: 120px;
+            max-height: 360px;
+            overflow: auto;
+            background: #0b1220;
+            color: #cbd5e1;
+            border-radius: 8px;
+            padding: 12px;
+            white-space: pre-wrap;
+            text-align: left;
+            font-size: 0.78em;
+        }
     </style>
 </head>
 <body>
     <h1>Outlander BMS Monitor</h1>
 
-    <div class="ess-summary">
+    <div class="safety-summary">
         <div class="summary-item">
-            <div class="summary-value" id="essState">--</div>
-            <div class="summary-label">ESS State</div>
-        </div>
-        <div class="summary-item">
-            <div class="summary-value" id="contactorState">--</div>
-            <div class="summary-label">Contactor</div>
-        </div>
-        <div class="summary-item">
-            <div class="summary-value" id="chargerState">--</div>
-            <div class="summary-label">Charger</div>
+            <div class="summary-value" id="batterySafeToUse">--</div>
+            <div class="summary-label">Battery Safe To Use (GPIO15)</div>
         </div>
     </div>
 
@@ -426,10 +513,6 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             <div class="summary-value" id="balanceTarget">--</div>
             <div class="summary-label">8th-Lowest Balance Target (mV)</div>
         </div>
-        <div class="summary-item">
-            <div class="summary-value" id="simpBmsDesignLimits">--</div>
-            <div class="summary-label">BE Design Max / Min (V)</div>
-        </div>
     </div>
 
     <div class="protection-row">
@@ -441,28 +524,32 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
 
     <div class="controls">
         <button id="balanceBtn" onclick="toggleBalancing()">Balancing: OFF</button>
+        <button id="balanceRecoveryBtn" class="recovery" onclick="restartBalancing()">Restart Balancing</button>
+        <button id="debugBtn" class="off" onclick="sendCommand('d')">Debug: OFF</button>
+        <button class="recovery" onclick="sendCommand('o', 'Enable the 10-minute supervised voltage recovery override? Confirm fresh CMU data and prepare the charge/discharge procedure first.')">Enable Voltage Override</button>
+        <button class="off" onclick="sendCommand('O')">Cancel Voltage Override</button>
+        <button onclick="sendCommand('r')">Full Report</button>
+        <button onclick="sendCommand('s')">Detailed Stats</button>
+        <button onclick="sendCommand('c')">CAN Diagnostics</button>
+        <button onclick="sendCommand('h')">Command Help</button>
+        <label class="mask-control">Expected A mask (hex)
+            <input id="expectedMaskA" maxlength="3" inputmode="text" aria-label="Expected Bus A CMU mask">
+            <button onclick="setExpectedMask('A')">Set A</button>
+        </label>
+        <label class="mask-control">Expected B mask (hex)
+            <input id="expectedMaskB" maxlength="3" inputmode="text" aria-label="Expected Bus B CMU mask">
+            <button onclick="setExpectedMask('B')">Set B</button>
+        </label>
         <button id="rebootBtn" class="danger" onclick="rebootDevice()">Reboot Device</button>
     </div>
 
+    <pre id="commandOutput" class="command-output">Web command output appears here.</pre>
+
     <div class="io-summary">
         <div class="io-block">
-            <div class="io-title">Inputs</div>
+            <div class="io-title">Output</div>
             <div class="io-grid">
-                <div class="io-item"><span class="io-label">AC_PRESENT</span><span class="io-value" id="ioAcPresent">--</span></div>
-                <div class="io-item"><span class="io-label">KEY_ON</span><span class="io-value" id="ioKeyOn">--</span></div>
-                <div class="io-item"><span class="io-label">AUX_IN</span><span class="io-value" id="ioAuxIn">--</span></div>
-                <div class="io-item"><span class="io-label">CUR_LOW (A)</span><span class="io-value" id="ioCurLow">--</span></div>
-                <div class="io-item"><span class="io-label">CUR_HIGH (A)</span><span class="io-value" id="ioCurHigh">--</span></div>
-            </div>
-        </div>
-        <div class="io-block">
-            <div class="io-title">Outputs</div>
-            <div class="io-grid">
-                <div class="io-item"><span class="io-label">MAIN</span><span class="io-value" id="ioMain">--</span></div>
-                <div class="io-item"><span class="io-label">PRECHG</span><span class="io-value" id="ioPrecharge">--</span></div>
-                <div class="io-item"><span class="io-label">NEG_CONT</span><span class="io-value" id="ioNegCont">--</span></div>
-                <div class="io-item"><span class="io-label">CHG_EN</span><span class="io-value" id="ioChgEn">--</span></div>
-                <div class="io-item"><span class="io-label">DISCHG_EN</span><span class="io-value" id="ioDischgEn">--</span></div>
+                <div class="io-item"><span class="io-label">BATTERY_SAFE_TO_USE</span><span class="io-value" id="ioBatterySafeToUse">--</span></div>
             </div>
         </div>
     </div>
@@ -470,6 +557,7 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
     <div class="status" id="status">Connecting...</div>
     <div class="status uptime" id="uptime">Uptime: --</div>
     <div class="status uptime" id="balanceDiagnostics">Balance CAN: --</div>
+    <div class="status uptime" id="twaiDiagnostics">TWAI B: --</div>
 
     <script>
         let balancingEnabled = false;
@@ -477,6 +565,7 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
         let expectedMaskA = 0;
         let expectedMaskB = 0;
         let rebooting = false;
+        let restartingBalancing = false;
         const busOpenState = { A: null, B: null };
 
         function setBusOpen(bus, isOpen) {
@@ -507,6 +596,10 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             balancingEnabled = data.balancingEnabled;
             expectedMaskA = summary.expectedCmusA;
             expectedMaskB = summary.expectedCmusB;
+            const maskAInput = document.getElementById('expectedMaskA');
+            const maskBInput = document.getElementById('expectedMaskB');
+            if (document.activeElement !== maskAInput) maskAInput.value = expectedMaskA.toString(16).toUpperCase().padStart(3, '0');
+            if (document.activeElement !== maskBInput) maskBInput.value = expectedMaskB.toString(16).toUpperCase().padStart(3, '0');
 
             // Update CAN status
             const canEl = document.getElementById('canStatus');
@@ -530,15 +623,10 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             document.getElementById('soc').textContent = hasData ? (summary.soc + '%') : na;
             document.getElementById('avgTemp').textContent = hasData ? summary.avgTemp : na;
 
-            const designEl = document.getElementById('simpBmsDesignLimits');
-            if (summary.simpBmsEnabled) {
-                designEl.textContent = summary.simpBmsMaxDesignVoltageV.toFixed(1) + ' / ' +
-                    summary.simpBmsMinDesignVoltageV.toFixed(1);
-                designEl.style.color = '#93c5fd';
-            } else {
-                designEl.textContent = 'OFF';
-                designEl.style.color = '#6b7280';
-            }
+            const debugBtn = document.getElementById('debugBtn');
+            debugBtn.textContent = 'Debug: ' + (summary.debugMode ? 'ON' : 'OFF');
+            debugBtn.className = summary.debugMode ? '' : 'off';
+
             
             // Protection status with color
             const protEl = document.getElementById('protection');
@@ -551,46 +639,12 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
                 protEl.style.color = '#ef4444';
             }
 
-            // ESS state and contactor/charger status
-            const essEl = document.getElementById('essState');
-            essEl.textContent = summary.essState;
-            if (summary.essState === 'CONTACTOR_ON') {
-                essEl.style.color = '#4ade80';
-            } else if (summary.essState === 'PRECHARGE') {
-                essEl.style.color = '#f59e0b';
-            } else if (summary.essState === 'FAULT') {
-                essEl.style.color = '#ef4444';
-            } else {
-                essEl.style.color = '#888';
-            }
-
-            const contactorEl = document.getElementById('contactorState');
-            contactorEl.textContent = summary.contactorClosed ? 'ON' : 'OFF';
-            if (summary.contactorClosed) {
-                contactorEl.style.color = '#4ade80';
-            } else if (summary.essState === 'FAULT') {
-                contactorEl.style.color = '#ef4444';
-            } else {
-                contactorEl.style.color = '#6b7280';
-            }
-
-            const chargerEl = document.getElementById('chargerState');
-            chargerEl.textContent = summary.chargerEnabled ? 'ENABLED' : 'DISABLED';
-            chargerEl.style.color = summary.chargerEnabled ? '#4ade80' : '#6b7280';
-
             const io = summary.io || {};
-            const inputs = io.inputs || {};
-            const outputs = io.outputs || {};
-            setIoState('ioAcPresent', !!inputs.acPresent);
-            setIoState('ioKeyOn', !!inputs.keyOn);
-            setIoState('ioAuxIn', !!inputs.auxIn);
-            setIoValue('ioCurLow', inputs.curLowAmps);
-            setIoValue('ioCurHigh', inputs.curHighAmps);
-            setIoState('ioMain', !!outputs.main);
-            setIoState('ioPrecharge', !!outputs.precharge);
-            setIoState('ioNegCont', !!outputs.negContactor);
-            setIoState('ioChgEn', !!outputs.chargerEn);
-            setIoState('ioDischgEn', !!outputs.dischargeEn);
+            const batterySafe = !!io.batterySafeToUse;
+            const batterySafeEl = document.getElementById('batterySafeToUse');
+            batterySafeEl.textContent = batterySafe ? 'SAFE' : 'UNSAFE';
+            batterySafeEl.style.color = batterySafe ? '#4ade80' : '#ef4444';
+            setIoState('ioBatterySafeToUse', batterySafe);
             
             document.getElementById('balanceBtn').textContent = 'Balancing: ' + (balancingEnabled ? 'ON' : 'OFF');
             document.getElementById('balanceBtn').className = balancingEnabled ? '' : 'off';
@@ -699,6 +753,19 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
                 'Balance CAN: ' + summary.balanceTxQueued + '/' + summary.balanceTxAttempts +
                 ' queued, Bus ' + busName + ', target ' +
                 (summary.lastBalanceTargetMv || '--') + ' mV';
+            const twai = summary.twai || {};
+            const recovery = summary.balanceRecovery || {};
+            let twaiText = 'TWAI B: ' + (twai.state || 'UNAVAILABLE') +
+                ' | TX err ' + (twai.txErrorCounter ?? '--') +
+                ' | TX failed ' + (twai.txFailedCount ?? '--') +
+                ' | bus err ' + (twai.busErrorCount ?? '--') +
+                ' | arb lost ' + (twai.arbLostCount ?? '--');
+            if (recovery.active) {
+                twaiText += ' | balance restart: ' + Math.ceil((recovery.remainingMs || 0) / 1000) + 's';
+            } else if (recovery.count) {
+                twaiText += ' | balance restarts: ' + recovery.count;
+            }
+            document.getElementById('twaiDiagnostics').textContent = twaiText;
         }
 
         async function fetchData() {
@@ -726,6 +793,70 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
                 }
             } catch (err) {
                 console.error('Toggle failed:', err);
+            }
+        }
+
+        async function sendCommand(command, confirmation) {
+            if (confirmation && !window.confirm(confirmation)) return;
+            const output = document.getElementById('commandOutput');
+            try {
+                const formData = new FormData();
+                formData.append('command', command);
+                const response = await fetch('/api/command', { method: 'POST', body: formData });
+                const payload = await response.json();
+                output.textContent = JSON.stringify(payload, null, 2);
+                if (!response.ok) throw new Error(payload.error || ('HTTP ' + response.status));
+                fetchData();
+            } catch (err) {
+                output.textContent = 'Command failed: ' + err.message;
+            }
+        }
+
+        async function setExpectedMask(bus) {
+            const input = document.getElementById(bus === 'A' ? 'expectedMaskA' : 'expectedMaskB');
+            const mask = input.value.trim();
+            if (!/^[0-9a-fA-F]{1,3}$/.test(mask)) {
+                document.getElementById('commandOutput').textContent = 'Mask must be 1-3 hexadecimal digits.';
+                return;
+            }
+            const formData = new FormData();
+            formData.append('command', bus);
+            formData.append('mask', mask);
+            try {
+                const response = await fetch('/api/command', { method: 'POST', body: formData });
+                const payload = await response.json();
+                document.getElementById('commandOutput').textContent = JSON.stringify(payload, null, 2);
+                if (!response.ok) throw new Error(payload.error || ('HTTP ' + response.status));
+                fetchData();
+            } catch (err) {
+                document.getElementById('commandOutput').textContent = 'Command failed: ' + err.message;
+            }
+        }
+
+        async function restartBalancing() {
+            if (!window.confirm('Send a 2-second balance-disable pulse, then re-enable balancing? This does not reboot the BMS or reset CMUs.')) return;
+
+            restartingBalancing = true;
+            const button = document.getElementById('balanceRecoveryBtn');
+            const status = document.getElementById('status');
+            button.disabled = true;
+            button.textContent = 'Restarting...';
+            status.textContent = 'Balance restart requested: disable pulse in progress.';
+            status.className = 'status';
+
+            try {
+                const response = await fetch('/api/balancing/restart', { method: 'POST' });
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                setTimeout(fetchData, 2300);
+            } catch (err) {
+                status.textContent = 'Balance restart was not started: ' + err.message;
+                status.className = 'status error';
+            } finally {
+                setTimeout(() => {
+                    restartingBalancing = false;
+                    button.disabled = false;
+                    button.textContent = 'Restart Balancing';
+                }, 2300);
             }
         }
 
@@ -824,6 +955,90 @@ static void handleApiBalancing(AsyncWebServerRequest* request) {
     request->send(200, "application/json", json);
 }
 
+static void handleApiBalanceRestart(AsyncWebServerRequest* request) {
+    if (!canRequestBalanceRecovery()) {
+        request->send(409, "application/json",
+                      "{\"error\":\"Balancing must be on and no restart may already be active\"}");
+        return;
+    }
+
+    request->send(202, "application/json",
+                  "{\"status\":\"balance_disable_pulse_started\",\"durationMs\":2000}");
+}
+
+static void handleApiCommand(AsyncWebServerRequest* request) {
+    if (!request->hasParam("command", true)) {
+        request->send(400, "application/json", "{\"error\":\"Missing command\"}");
+        return;
+    }
+
+    const String command = request->getParam("command", true)->value();
+    if (command == "b") {
+        g_bmsState.balancingEnabled = !g_bmsState.balancingEnabled;
+        request->send(200, "application/json",
+                      String("{\"command\":\"b\",\"balancingEnabled\":") +
+                      (g_bmsState.balancingEnabled ? "true}" : "false}"));
+        return;
+    }
+    if (command == "d") {
+        g_bmsState.debugMode = !g_bmsState.debugMode;
+        request->send(200, "application/json",
+                      String("{\"command\":\"d\",\"debugMode\":") +
+                      (g_bmsState.debugMode ? "true}" : "false}"));
+        return;
+    }
+    if (command == "r") {
+        request->send(200, "application/json", buildReportJson());
+        return;
+    }
+    if (command == "s") {
+        request->send(200, "application/json", buildDetailedStatsJson());
+        return;
+    }
+    if (command == "c") {
+        request->send(200, "application/json", buildCanDiagnosticsJson());
+        return;
+    }
+    if (command == "h" || command == "?") {
+        request->send(200, "application/json", buildHelpJson());
+        return;
+    }
+    if (command == "o") {
+        if (!protectionEnableSupervisedOverride()) {
+            request->send(409, "application/json",
+                          "{\"error\":\"Override refused: fresh selected-CMU CAN data and safe temperature are required\",\"status\":\"" +
+                          String(protectionGetStatus()) + "\"}");
+            return;
+        }
+        request->send(200, "application/json",
+                      "{\"command\":\"o\",\"status\":\"SUPERVISED OVERRIDE\",\"remainingMs\":600000}");
+        return;
+    }
+    if (command == "O") {
+        protectionCancelSupervisedOverride();
+        request->send(200, "application/json",
+                      "{\"command\":\"O\",\"status\":\"override_cancelled\"}");
+        return;
+    }
+    if (command == "A" || command == "B") {
+        if (!request->hasParam("mask", true)) {
+            request->send(400, "application/json",
+                          "{\"error\":\"A/B requires mask in hexadecimal or decimal\"}");
+            return;
+        }
+        const uint16_t mask = static_cast<uint16_t>(
+            strtoul(request->getParam("mask", true)->value().c_str(), nullptr, 16)) & 0x03FF;
+        if (command == "A") g_bmsSettings.expectedCmusA = mask;
+        else g_bmsSettings.expectedCmusB = mask;
+        settingsSave();
+        String response = "{\"command\":\"" + command + "\",\"mask\":" + String(mask) + "}";
+        request->send(200, "application/json", response);
+        return;
+    }
+
+    request->send(400, "application/json", "{\"error\":\"Unknown serial command\"}");
+}
+
 static void handleApiReboot(AsyncWebServerRequest* request) {
     if (s_rebootTaskScheduled) {
         request->send(202, "application/json", "{\"status\":\"restarting\"}");
@@ -914,7 +1129,14 @@ void webServerInit() {
     s_server.on("/api/module/20", HTTP_GET, [](AsyncWebServerRequest* r) { handleApiModuleN(r, 20); });
 
     s_server.on("/api/summary", HTTP_GET, handleApiSummary);
+    s_server.on("/api/balancing/restart", HTTP_POST, handleApiBalanceRestart);
+    // ESPAsyncWebServer resolves matching routes in registration order. Keep
+    // the longer recovery route before the /api/balancing prefix.
     s_server.on("/api/balancing", HTTP_POST, handleApiBalancing);
+    s_server.on("/api/command", HTTP_POST, handleApiCommand);
+    s_server.on("/api/help", HTTP_GET, [](AsyncWebServerRequest* request) {
+        request->send(200, "application/json", buildHelpJson());
+    });
     s_server.on("/api/reboot", HTTP_POST, handleApiReboot);
     s_server.on("/api/config", HTTP_POST, handleApiConfig);
 

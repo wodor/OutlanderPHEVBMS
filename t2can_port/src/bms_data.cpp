@@ -50,7 +50,6 @@ void settingsLoad() {
     g_bmsSettings.expectedCmusA = (uint16_t)s_prefs.getUInt("cmusA", g_bmsSettings.expectedCmusA);
     g_bmsSettings.expectedCmusB = (uint16_t)s_prefs.getUInt("cmusB", g_bmsSettings.expectedCmusB);
     g_bmsSettings.useBusAForCmu = s_prefs.getBool("cmuAen", g_bmsSettings.useBusAForCmu);
-    g_bmsSettings.simpBmsEnabled = s_prefs.getBool("simpben", g_bmsSettings.simpBmsEnabled);
 
     // Load SOC voltage curve (persisted as individual int keys)
     g_bmsSettings.socVoltageCurve[0] = s_prefs.getInt("socV0", g_bmsSettings.socVoltageCurve[0]);
@@ -64,9 +63,8 @@ void settingsLoad() {
     Serial.println("[BMS] Settings loaded from NVS");
     Serial.printf("[BMS] Expected CMUs A: 0x%03X, B: 0x%03X\n",
                   g_bmsSettings.expectedCmusA, g_bmsSettings.expectedCmusB);
-    Serial.printf("[BMS] Bus A for CMU: %s, SIMPBMS: %s\n",
-                  g_bmsSettings.useBusAForCmu ? "YES" : "NO",
-                  g_bmsSettings.simpBmsEnabled ? "ENABLED" : "DISABLED");
+    Serial.printf("[BMS] Bus A for CMU: %s\n",
+                  g_bmsSettings.useBusAForCmu ? "YES" : "NO");
     Serial.printf("[BMS] SOC curve: [%d,%d,%d,%d] useVoltageSoc=%s\n",
                   g_bmsSettings.socVoltageCurve[0], g_bmsSettings.socVoltageCurve[1],
                   g_bmsSettings.socVoltageCurve[2], g_bmsSettings.socVoltageCurve[3],
@@ -79,7 +77,6 @@ void settingsSave() {
     s_prefs.putUInt("cmusA", g_bmsSettings.expectedCmusA);
     s_prefs.putUInt("cmusB", g_bmsSettings.expectedCmusB);
     s_prefs.putBool("cmuAen", g_bmsSettings.useBusAForCmu);
-    s_prefs.putBool("simpben", g_bmsSettings.simpBmsEnabled);
     s_prefs.putInt("socV0", g_bmsSettings.socVoltageCurve[0]);
     s_prefs.putInt("socV1", g_bmsSettings.socVoltageCurve[1]);
     s_prefs.putInt("socV2", g_bmsSettings.socVoltageCurve[2]);

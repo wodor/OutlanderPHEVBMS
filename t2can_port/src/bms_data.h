@@ -62,113 +62,30 @@ struct CmuData {
  * In V2, these were stored in EEPROM. On ESP32-S3, we'll use NVS (flash storage).
  */
 struct BmsSettings {
-    // Voltage limits (per cell, in volts)
-    float overVoltage;          // Overvoltage fault threshold (default: 4.2V)
-    float underVoltage;         // Undervoltage discharge cutoff (default: 3.0V)
-    float chargeVoltage;        // Maximum charge voltage (default: 4.1V)
-    float dischargeVoltage;     // Minimum discharge voltage (default: 3.2V)
-    float storageVoltage;       // Storage mode target (default: 3.8V)
-    float chargeHysteresis;     // Voltage drop to resume charging (default: 0.2V)
-    float dischargeHysteresis;  // Voltage rise to resume discharge (default: 0.2V)
-    float balanceVoltage;       // Start balancing above this (default: 3.9V)
-    float balanceHysteresis;    // Balance hysteresis (default: 0.04V)
-    float cellGap;              // Max allowed cell voltage difference (default: 0.2V)
-    
-    // Temperature limits (in °C)
+    // The only pack-level trip configured here is the high-temperature hard
+    // stop. Cell-voltage emergency stops are fixed safety backstops in
+    // protection.cpp; charge/discharge limits belong to the T-Panel.
     float overTemp;             // Overheat fault threshold (default: 65°C)
-    float underTemp;            // Cold limit (default: -10°C)
-    float chargeTemp;           // Charge derate starts here (default: 0°C)
-    float dischargeTemp;        // Discharge derate starts here (default: 40°C)
-    float tempWarningOffset;    // Temp offset for warnings (default: 5°C)
-    
-    // Current limits (in 0.1A units, so 300 = 30.0A)
-    int16_t maxChargeCurrent;   // Maximum charge current (default: 300 = 30A)
-    int16_t endChargeCurrent;   // End-of-charge current (default: 50 = 5A)
-    int16_t maxDischargeCurrent;// Maximum discharge current (default: 300 = 30A)
-    int16_t coldChargeCurrent;  // Max charge current when cold (default: 10 = 1A)
-    
-    // Battery pack configuration
-    int seriesCells;            // Number of cells in series (default: 12 for Outlander)
-    int parallelStrings;        // Number of parallel strings (default: 1)
-    int capacityAh;             // Battery capacity in Ah (default: 100Ah)
-    
     // SOC voltage curve (for voltage-based SOC)
     // Maps voltage to SOC: [lowVolt_mV, lowSOC_%, highVolt_mV, highSOC_%]
     int socVoltageCurve[4];     // Default: [3500, 0, 4100, 100]
-    bool useVoltageSoc;         // If true, use voltage-based SOC instead of coulomb-counting
-    
-    // Charger configuration
-    int chargerType;            // 0=none, 1=Brusa, 2=ChevyVolt, 3=Eltek, 4=Elcon, etc.
-    int chargerSpeedMs;         // Message interval in ms (default: 100ms)
-    bool chargerDirect;         // True if charger always connected to HV (default: true)
-    
-    // Current sensor configuration
-    int currentSensorType;      // 0=none, 1=analog dual, 2=CAN, 3=analog single
-    int currentSensorCan;       // CAN sensor type: 1=LemCAB300, 2=LemCAB500, 3=IsaScale, 4=VictronLynx
-    float conversionHigh;       // mV/A for high range (default: 580)
-    float conversionLow;        // mV/A for low range (default: 6430)
-    uint16_t offset1;           // mV offset for sensor 1 (default: 1750)
-    uint16_t offset2;           // mV offset for sensor 2 (default: 1750)
-    int32_t rangeChangeCurrent; // mA threshold for range switching (default: 20000)
-    uint16_t currentDeadband;   // mV deadband to reject noise (default: 5)
-    
-    // Precharge & contactors
-    int prechargeTimeMs;        // Precharge duration in ms (default: 5000)
-    int prechargeCurrent;       // Max current before closing main (default: 1000mA)
-    int contactorHoldDuty;      // PWM duty cycle to hold contactor (default: 50)
+    bool useVoltageSoc;         // Retained configuration compatibility; SOC is voltage-derived
     
     // Expected CMUs configuration (bitmask for IDs 1-10)
     uint16_t expectedCmusA;     // Expected CMUs on Bus A
     uint16_t expectedCmusB;     // Expected CMUs on Bus B
 
     // CAN bus role configuration
-    bool useBusAForCmu;         // If false, Bus A is free for other protocols (e.g., SIMPBMS)
-    bool simpBmsEnabled;        // Enable SIMPBMS/Victron-style CAN output
+    bool useBusAForCmu;         // Whether selected CMUs are expected on Bus A
 
     // Constructor with defaults
     BmsSettings() :
-        overVoltage(4.2f),
-        underVoltage(3.0f),
-        chargeVoltage(4.1f),
-        dischargeVoltage(3.2f),
-        storageVoltage(3.8f),
-        chargeHysteresis(0.2f),
-        dischargeHysteresis(0.2f),
-        balanceVoltage(3.9f),
-        balanceHysteresis(0.04f),
-        cellGap(0.2f),
         overTemp(65.0f),
-        underTemp(-10.0f),
-        chargeTemp(0.0f),
-        dischargeTemp(40.0f),
-        tempWarningOffset(5.0f),
-        maxChargeCurrent(300),
-        endChargeCurrent(50),
-        maxDischargeCurrent(300),
-        coldChargeCurrent(10),
-        seriesCells(12),
-        parallelStrings(1),
-        capacityAh(100),
         socVoltageCurve{3500, 0, 4100, 100},
         useVoltageSoc(true),
-        chargerType(0),
-        chargerSpeedMs(100),
-        chargerDirect(true),
-        currentSensorType(0),
-        currentSensorCan(0),
-        conversionHigh(580.0f),
-        conversionLow(6430.0f),
-        offset1(1750),
-        offset2(1750),
-        rangeChangeCurrent(20000),
-        currentDeadband(5),
-        prechargeTimeMs(5000),
-        prechargeCurrent(1000),
-        contactorHoldDuty(50),
         expectedCmusA(0x3FF),   // Default: expect all 10 CMUs on Bus A
         expectedCmusB(0x3FF),   // Default: expect all 10 CMUs on Bus B (enabled)
-        useBusAForCmu(false),
-        simpBmsEnabled(true)
+        useBusAForCmu(false)
     {}
 };
 
@@ -200,29 +117,12 @@ struct BmsState {
     
     // SOC (State of Charge) tracking
     int     soc;                        // State of charge 0-100%
-    float   ampSeconds;                 // Accumulated amp-seconds for coulomb counting
-    bool    socInitialized;             // Has SOC been initialized?
-    
-    // Current sensing
-    float   currentAmps;                // Current in amps (+ = charging, - = discharging)
-    float   avgCurrentAmps;             // Averaged current
-    float   currentSenseLowAmps;        // Scaled amps from low-range ADC channel
-    float   currentSenseHighAmps;       // Scaled amps from high-range ADC channel
-    int     currentSensorRange;         // 0=none, 1=low range, 2=high range
-    
-    // Charger state
-    int16_t targetChargeCurrent;        // Target charge current (0.1A units)
-    int16_t targetDischargeCurrent;     // Target discharge current (0.1A units)
-    bool    chargerEnabled;             // Is charger enabled?
-    
     // Control flags
     bool    balancingEnabled;           // Are we sending balance commands?
     bool    debugMode;                  // Print raw CAN frames?
     
     // Timing
     unsigned long lastCanMessageTime;   // millis() when last CAN message received
-    unsigned long lastCurrentUpdate;    // millis() of last current reading
-    unsigned long lastSocUpdate;        // millis() of last SOC calculation
 
     BmsState() : 
         lowestCellMv(DEFAULT_LOW_CELL_MV), 
@@ -236,21 +136,9 @@ struct BmsState {
         highestTemp(-999.0f),
         avgTemp(0.0f),
         soc(100),
-        ampSeconds(0.0f),
-        socInitialized(false),
-        currentAmps(0.0f),
-        avgCurrentAmps(0.0f),
-        currentSenseLowAmps(0.0f),
-        currentSenseHighAmps(0.0f),
-        currentSensorRange(0),
-        targetChargeCurrent(0),
-        targetDischargeCurrent(0),
-        chargerEnabled(false),
         balancingEnabled(false), 
         debugMode(false), 
-        lastCanMessageTime(0),
-        lastCurrentUpdate(0),
-        lastSocUpdate(0)
+        lastCanMessageTime(0)
     {}
 
     /**
