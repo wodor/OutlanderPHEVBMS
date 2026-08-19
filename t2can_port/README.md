@@ -4,64 +4,39 @@ This is a port of the [OutlanderPHEVBMS](https://github.com/tomdebree/OutlanderP
 
 The purpose is to read cell voltages and temperatures from Mitsubishi Outlander PHEV battery modules via CAN bus, providing a monitoring and management solution for DIY home energy storage systems built from dismantled Outlander PHEV batteries.
 
+## Current deployed contract (19 August 2026)
+
+The current firmware is a lean monitoring/safety controller. It reads CMU CAN data, controls balancing, publishes MQTT telemetry, and drives one physical permissive: GPIO15 `BATTERY_SAFE_TO_USE` (active HIGH). GPIO15 goes LOW for high temperature, no CAN data for 10 seconds, a selected CMU missing for 10 seconds, any cell at or above 4.20 V, or any cell at or below 2.80 V. Temperature and communication trips cannot be overridden.
+
+This firmware does not read amperage, perform coulomb counting, control inverter current, run ESS contactor sequencing, or emit inverter-side SIMPBMS frames. The T-Panel Battery Emulator owns inverter protocol and operating policy. SOC is voltage-derived telemetry/fallback data. The live device is at `http://192.168.2.90/`; its companion T-Panel is at `http://192.168.2.63/`.
+
+Balancing-cell count MQTT telemetry is deliberately published at a 10-second interval. Per-CMU maximum temperature topics and the overall pack maximum temperature topic are published with the other BMS telemetry.
+
 ## Features
 
 ### Current Capabilities
 
-- **CAN Bus Communication**: Reads data from up to 8 Outlander PHEV CMU (Cell Monitoring Units)
-- **Cell Voltage Monitoring**: Tracks all 64 cells (8 cells per CMU × 8 CMUs)
+- **CAN Bus Communication**: Reads data from up to 20 Outlander PHEV CMUs across two buses
+- **Cell Voltage Monitoring**: Tracks 8 cells per configured CMU
 - **Temperature Monitoring**: 3 temperature sensors per CMU
-- **Cell Balancing Control**: Uses the median valid cell voltage so approximately the highest half of cells discharge
+- **Cell Balancing Control**: Uses the eighth-lowest valid cell voltage, preserving the lowest seven cells from discharge
 - **Web Dashboard**: Real-time monitoring via WiFi
-- **Serial Console**: Interactive command interface
+- **Serial/Web Command Parity**: Every serial command is available through `POST /api/command`; `GET /api/help` returns the mapping
+- **Fail-safe physical output**: GPIO15 `BATTERY_SAFE_TO_USE`, active HIGH only while the BMS is safe
+- **Temperature telemetry**: Per-CMU and overall maximum temperature MQTT topics
+- **CAN diagnostics**: MCP2515/TWAI status, error counters, and message counters in serial and web output
 
-### V2 Features
+### Historical V2 design (not the current contract)
 
-- **SOC (State of Charge) Calculation**: 
-  - Coulomb-counting (amp-hour integration) for accurate SOC tracking
-  - Voltage-based fallback mode
-  - Persistent SOC storage (survives reboots)
-  - Manual SOC reset capability
-
-- **Current Sensing**: 
-  - Framework for dual-range analog sensors
-  - CAN bus current sensor support (LEM, IsaScale, Victron)
-  - Low-pass filtering for stable readings
-  
-- **Protection System**:
-  - Overvoltage/undervoltage detection
-  - Overtemperature/undertemperature monitoring
-  - Cell imbalance warnings
-  - Configurable thresholds and hysteresis
-
-- **Pack Statistics**:
-  - Min/max/average cell voltages
-  - Median cell voltage and pack-wide cell delta
-  - Complete eight-cell voltage for every CMU module
-  - Min/max/average temperatures
-  - Pack voltage calculation
-  - Delta voltage tracking
-
-- **ESS Control** (Energy Storage System):
-  - Safe precharge sequencing (time + current threshold)
-  - Main contactor engagement after precharge completion
-  - Charger control integrated with protection system
-  - ESS-only mode (stationary storage, not vehicle drive)
-  - Automatic safety shutdown on protection faults
-
-- **Enhanced Displays**:
-  - Serial console shows SOC, current, pack voltage, temps
-  - Web dashboard displays all V2 metrics
-  - Detailed statistics view
+Earlier development included current sensing, coulomb counting, ESS contactor outputs, and SIMPBMS design fields. Those modules were removed from the deployed firmware; do not use the historical sections below as an operating procedure.
 
 ## Hardware Requirements
 
 - **LilyGO T-2Can board** (ESP32-S3)
 - **Outlander PHEV battery modules** with CMUs
 - **CAN bus connection** to the battery modules
-- **Optional**: Current sensor (analog or CAN-based)
 
-## ESS Wiring (ASCII Diagram)
+## Historical ESS Wiring (not used by current firmware)
 
 Logic outputs are **active HIGH** (GPIO HIGH = output ON). Coils must be driven
 through appropriate drivers/relays; GPIOs do not drive 12V directly.
@@ -110,7 +85,7 @@ Inputs (active HIGH):
   IO42 = AUX (optional)
 ```
 
-## ESS Control Sequence
+## Historical ESS Control Sequence (not used by current firmware)
 
 ```
 Time ---->
@@ -178,87 +153,44 @@ The web interface provides real-time monitoring of:
 - Pack voltage
 - Pack-wide cell-voltage delta
 - Per-module voltage totals for each complete eight-cell CMU
-- SIMPBMS/Battery Emulator design maximum and minimum voltage limits
-- Current flow (charge/discharge)
+- Overall maximum temperature and per-module maximum temperatures
 - Individual cell voltages (color-coded)
 - Temperature readings
 - Cell balancing status
 - Protection system status
 - CAN bus connectivity
+- GPIO15 battery-safe-to-use state and supervised-override timer
 - Collapsible Bus A/Bus B sections when no CMUs are selected
 - Confirmed reboot control with visible restart feedback
+- Full report, detailed statistics, CAN diagnostics, debug toggle, balancing toggle, supervised voltage override, and expected-CMU mask controls
 
 ![web server](web_server.png)
 
-## Serial Commands
+## Serial commands and web equivalents
 
 Connect via USB serial (115200 baud) and use these commands:
 
 - `b` - Toggle cell balancing on/off
 - `d` - Toggle debug mode (shows raw CAN frames)
-- `R` - Reset SOC to 100%
-- `s` - Show detailed statistics (all modules, cells, temps)
-- `r` - Show what web server is showing
-- `h` - Show help
+- `r` - Show the full BMS report
+- `o` - Enable the ten-minute supervised voltage-recovery override (refused when CAN/temperature is unsafe)
+- `O` - Cancel the supervised override
+- `s` - Show detailed module statistics
+- `c` - Show MCP2515/TWAI CAN diagnostics
+- `A` - Set the expected Bus A CMU mask, entered as hexadecimal
+- `B` - Set the expected Bus B CMU mask, entered as hexadecimal
+- `h` or `?` - Show help
 
-## Configuration
+The dashboard exposes these through `POST /api/command` with form field `command`. For `A` and `B`, add `mask=HEX`; for example `command=B&mask=3FF`. `GET /api/help` returns the same mapping. The existing `/api/summary`, `/api/module/N`, `/api/balancing`, `/api/balancing/restart`, `/api/config`, and `/api/reboot` endpoints remain available.
 
-Settings are defined in `src/bms_data.h` in the `BmsSettings` structure. Key parameters:
+## Current configuration reference
 
-### Voltage Limits (per cell)
-- `overVoltage` - Overvoltage fault threshold (default: 4.2V)
-- `underVoltage` - Undervoltage discharge cutoff (default: 3.0V)
-- `chargeVoltage` - Maximum charge voltage (default: 4.1V)
-- `balanceVoltage` - Start balancing above this (default: 3.9V)
+The active settings are defined in `src/bms_data.h`. They are limited to the
+high-temperature trip, voltage-derived SOC curve, expected-CMU masks, and CAN
+bus role. Emergency cell-voltage stops are fixed in `src/protection.cpp`;
+charge/discharge operating limits belong to the T-Panel Battery Emulator.
 
-### Temperature Limits
-- `overTemp` - Overheat fault (default: 65°C)
-- `underTemp` - Cold limit (default: -10°C)
-
-### Battery Configuration
-- `seriesCells` - Cells in series (default: 12) - it works ok despite it is not true value
-- `parallelStrings` - Parallel strings (default: 1)
-- `capacityAh` - Battery capacity (default: 100Ah)
-
-### SOC Configuration
-- `useVoltageSoc` - Use voltage-based SOC instead of coulomb-counting
-- `socVoltageCurve` - Voltage-to-SOC mapping [lowV_mV, lowSOC%, highV_mV, highSOC%]
-
-### ESS Control (Precharge & Contactor)
-- `prechargeTimeMs` - Minimum precharge duration (default: 5000ms)
-- `prechargeCurrent` - Maximum current threshold for precharge completion (default: 1000mA)
-- `contactorHoldDuty` - PWM duty cycle to hold contactor closed (default: 50%)
-
-## ESS Control
-
-The ESS (Energy Storage System) control module provides safe sequencing for stationary battery storage applications:
-
-### Precharge Sequence
-Precharge is a safety mechanism to gradually charge the DC link capacitors before engaging the main contactor:
-- **Time Requirement**: Precharge relay must be active for at least `prechargeTimeMs` (default: 5 seconds)
-- **Current Requirement**: Pack current must be below `prechargeCurrent` threshold (default: 1000mA = 1A)
-- **Both conditions** must be satisfied before the main contactor engages
-
-### Main Contactor Control
-- Only engages after successful precharge completion
-- Automatically disengages on any protection fault (overvoltage, undervoltage, overtemp, etc.)
-- PWM hold mode reduces coil power consumption after initial engagement
-
-### Charger Control
-- Charger enable/disable is controlled by `protectionCanCharge()`
-- Automatically disables on:
-  - Overvoltage conditions
-  - Overtemperature
-  - Undertemperature (too cold to charge safely)
-- Integrates with existing protection system
-
-### Safety Features
-- ESS-only mode (not for vehicle drive applications)
-- All outputs automatically disabled on protection faults
-- Non-blocking operation integrated with main loop timing
-- Leverages existing CLI menu structure - no menu changes required
-
-## Project Structure
+## Project Structure (historical entries marked below)
 
 ```
 t2can_port/
@@ -270,17 +202,13 @@ t2can_port/
 │   ├── serial_menu.h/cpp  # Serial console interface
 │   ├── wifi_handler.h/cpp # WiFi management
 │   ├── web_server.h/cpp   # Web dashboard
-│   ├── soc_calc.h/cpp     # SOC calculation (V2)
-│   ├── current_sense.h/cpp # Current sensing (V2)
-│   ├── protection.h/cpp   # Protection system (V2)
-│   └── ess_control.h/cpp  # ESS control (precharge, contactor, charger)
+│   ├── soc_calc.h/cpp     # Voltage-derived SOC
+│   └── protection.h/cpp   # GPIO15 safety permissive
 ├── test/
 │   ├── test_main.cpp      # Test entry point
 │   ├── test_bms_data.cpp  # BMS data tests
 │   ├── test_soc_calc.cpp  # SOC calculation tests
 │   ├── test_protection.cpp # Protection system tests
-│   ├── test_current_sense.cpp # Current sensing tests
-│   ├── test_ess_control.cpp # ESS control tests
 │   ├── test_safety_critical.cpp # Safety critical tests
 │   └── mocks/             # Mock Arduino/Preferences for native tests
 ├── platformio.ini         # Build configuration
@@ -291,10 +219,10 @@ t2can_port/
 
 ## Status
 
-✅ **Working**: CAN communication, voltage/temp reading, web dashboard, serial interface
-✅ **V2 Features**: SOC calculation, current sensing framework, protection system
-⚠️ **Tested**: Software compiled and tested with WiFi; **CAN bus tested with real battery modules**
-❌ **Not Implemented**: Physical current sensor integration, charger control (intentionally skipped)
+✅ **Working**: CAN communication, voltage/temp reading, MQTT telemetry, web dashboard, serial interface, and web command bridge
+✅ **Verified**: Native tests 26/26 passed; ESP32-S3 build and OTA deployment completed 19 August 2026
+⚠️ **Supervised**: GPIO15 safety permissive is deployed; physical breaker-trip cases still require end-to-end testing
+❌ **Intentionally absent**: amperage input, coulomb counting, ESS contactor control, and inverter-side SIMPBMS transmitter
 
 ## More Information
 
