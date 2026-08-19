@@ -502,6 +502,10 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             <div class="summary-label">Avg Temp (°C)</div>
         </div>
         <div class="summary-item">
+            <div class="summary-value" id="maximumTemp">--</div>
+            <div class="summary-label">Maximum Temp (°C)</div>
+        </div>
+        <div class="summary-item">
             <div class="summary-value" id="modulesOnline">--</div>
             <div class="summary-label">Modules Online</div>
         </div>
@@ -622,6 +626,7 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             document.getElementById('packVoltage').textContent = hasData ? summary.packVoltage : na;
             document.getElementById('soc').textContent = hasData ? (summary.soc + '%') : na;
             document.getElementById('avgTemp').textContent = hasData ? summary.avgTemp : na;
+            document.getElementById('maximumTemp').textContent = hasData ? summary.highestTemp : na;
 
             const debugBtn = document.getElementById('debugBtn');
             debugBtn.textContent = 'Debug: ' + (summary.debugMode ? 'ON' : 'OFF');
@@ -701,7 +706,10 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
                     busHtml += `<input type="checkbox" class="expected-chk" title="Expected CMU" ${isExpected ? 'checked' : ''} onchange="updateExpected('${busName}', ${mod.cmuId}, this.checked)">`;
                     busHtml += `<span class="module-title">CMU ${mod.cmuId}<span class="module-voltage">${moduleVoltage}</span><span class="module-delta">Δ${modDelta}mV</span></span>`;
                     busHtml += `</div>`;
-                    busHtml += `<span class="temps">${mod.temperatures.map(t => t.toFixed(1) + '°C').join(' | ')}</span>`;
+                    const moduleMaximumTemp = mod.maximumTemperature === null || mod.maximumTemperature === undefined
+                        ? '--'
+                        : mod.maximumTemperature.toFixed(1) + '°C';
+                    busHtml += `<span class="temps">${mod.temperatures.map(t => t.toFixed(1) + '°C').join(' | ')} · Max ${moduleMaximumTemp}</span>`;
                     busHtml += `</div>`;
                     busHtml += `<div class="cells">`;
 

@@ -220,7 +220,7 @@ t2can_port/
 ## Status
 
 ✅ **Working**: CAN communication, voltage/temp reading, MQTT telemetry, web dashboard, serial interface, and web command bridge
-✅ **Verified**: Native tests 26/26 passed; ESP32-S3 build and OTA deployment completed 19 August 2026
+✅ **Verified**: Native tests 27/27 and the ESP32-S3 OTA build pass; the earlier 26-test image was deployed on 19 August 2026
 ⚠️ **Supervised**: GPIO15 safety permissive is deployed; physical breaker-trip cases still require end-to-end testing
 ❌ **Intentionally absent**: amperage input, coulomb counting, ESS contactor control, and inverter-side SIMPBMS transmitter
 
