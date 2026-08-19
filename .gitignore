@@ -1,7 +1,9 @@
 # PlatformIO
 .pio/
+.pio-core/
 .pioenvs/
 .piolibdeps/
+.venv-pio313/
 
 # Build artifacts
 *.o
@@ -23,6 +25,7 @@ Thumbs.db
 
 # Config files with credentials
 .config.h
+.mqtt_config.h
 
 # Test artifacts
 /tmp/

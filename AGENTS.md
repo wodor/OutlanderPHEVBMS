@@ -103,7 +103,6 @@ Send to ID `0x3C3` every ~400ms:
 The project includes unit tests that run on the `native` platform (x86/Linux):
 
 ```bash
-cd t2can_port
 pio test -e native                # Run tests
 pio test -e native -vv            # Run with verbose output
 ```
@@ -147,7 +146,7 @@ Tests cover:
 
 ### Build Commands
 ```bash
-cd /Users/artwielogorski/prv/t2can/OutlanderPHEVBMS/t2can_port
+cd /Users/wodor/Projekty/PowerWall/OutlanderPHEVBMS
 pio run                                              # Build
 pio run -t upload --upload-port /dev/cu.usbmodem2101 # Upload
 pio device monitor --port /dev/cu.usbmodem2101      # Serial monitor
@@ -169,14 +168,6 @@ src/
 2. **Module-private state:** `static` variables at file scope
 3. **Global state:** Single `g_bmsState` struct for BMS data
 4. **Polling loop:** Check inputs, do periodic tasks, repeat
-
-## Original Project Variants
-
-The original repo has two versions:
-1. **`Outlander_BMS.ino`** - Simple, uses MCP_CAN library, Arduino-style
-2. **`OutlanderBMSV2/`** - Complex, Teensy 3.2 only, uses FlexCAN, ADC, EEPROM
-
-This port is based on the simpler version, adapted to use the `arduino-mcp2515` library that comes with T-2Can.
 
 ## Gotchas
 

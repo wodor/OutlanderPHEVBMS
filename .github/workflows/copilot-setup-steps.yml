@@ -49,6 +49,5 @@ jobs:
 
       - name: Pre-install PlatformIO native platform and dependencies
         run: |
-          cd t2can_port
           pio pkg install --platform native
           pio pkg install -e native

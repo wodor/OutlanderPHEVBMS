@@ -15,9 +15,9 @@ policy are intentionally outside this firmware and have no tests here.
 ## Run
 
 ```bash
-cd OutlanderPHEVBMS/t2can_port
-.venv-pio313/bin/pio test -e native
-.venv-pio313/bin/pio run -e outlander_bms
+cd OutlanderPHEVBMS
+.venv-pio313/bin/python -m platformio test -e native
+.venv-pio313/bin/python -m platformio run -e outlander_bms
 ```
 
 Use `pio test -e outlander_bms --upload-port <port>` only when an explicit
