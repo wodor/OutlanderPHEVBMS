@@ -2,7 +2,8 @@
 
 ## Project Overview
 
-This is a port of the [OutlanderPHEVBMS](https://github.com/tomdebree/OutlanderPHEVBMS) project to the LilyGO T-2Can board (ESP32-S3).
+This is the standalone Outlander PHEV CMU monitor for the LilyGO T-2Can board
+(ESP32-S3).
 
 **Purpose:** Read cell voltages and temperatures from Mitsubishi Outlander PHEV battery modules via CAN bus, with optional cell balancing control.
 
@@ -299,7 +300,7 @@ Updated periodically and displayed in serial and web interfaces.
 
 **Web Dashboard** (`src/web_server.cpp`): Real-time monitoring
 - Summary metrics including pack-wide cell delta and median balancing target
-- SIMPBMS design maximum/minimum voltage limits sent to Battery Emulator
+- No Battery Emulator or inverter protocol integration
 - Color-coded cell display
 - Complete per-module voltage totals
 - Collapsible empty Bus A and Bus B sections

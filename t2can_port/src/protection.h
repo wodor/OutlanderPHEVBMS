@@ -4,8 +4,8 @@
  * 
  * Drives the active-HIGH battery-safe-to-use output. This controller owns
  * only the hard stop conditions: high temperature, no CMU CAN traffic for ten
- * seconds, or a configured CMU that is absent/stale. Charge/discharge limits
- * and all other operational policy belong to the T-Panel Battery Emulator.
+ * seconds, or a configured CMU that is absent/stale. It does not set inverter
+ * charge/discharge limits or communicate with Battery Emulator.
  */
 #pragma once
 

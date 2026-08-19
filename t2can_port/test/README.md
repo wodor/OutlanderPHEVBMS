@@ -9,9 +9,8 @@ The native suite protects the deliberately small BMS responsibility:
   emergency cell-voltage stops, and the bounded recovery override.
 - `test_safety_critical.cpp`: fixed CMU, cell, and temperature array bounds.
 
-Current sensing, contactor-input handling, and ESS policy are intentionally
-outside this firmware and have no tests here; the T-Panel Battery Emulator owns
-that policy.
+Current sensing, contactor-input handling, inverter current control, and ESS
+policy are intentionally outside this firmware and have no tests here.
 
 ## Run
 

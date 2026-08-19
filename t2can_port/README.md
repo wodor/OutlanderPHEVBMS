@@ -1,14 +1,15 @@
 # Outlander PHEV BMS Reader for T-2Can
 
-This is a port of the [OutlanderPHEVBMS](https://github.com/tomdebree/OutlanderPHEVBMS) project to PlatformIO for the LilyGo T-2Can board (ESP32-S3). 
-
-The purpose is to read cell voltages and temperatures from Mitsubishi Outlander PHEV battery modules via CAN bus, providing a monitoring and management solution for DIY home energy storage systems built from dismantled Outlander PHEV batteries.
+This is standalone PlatformIO firmware for the LilyGo T-2Can board (ESP32-S3).
+It reads cell voltages and temperatures from Mitsubishi Outlander PHEV battery
+modules over CAN and provides monitoring, balancing, MQTT telemetry, and a
+physical safety permissive for DIY home energy storage.
 
 ## Current deployed contract (19 August 2026)
 
-The current firmware is a lean monitoring/safety controller. It reads CMU CAN data, controls balancing, publishes MQTT telemetry, and drives one physical permissive: GPIO15 `BATTERY_SAFE_TO_USE` (active HIGH). GPIO15 goes LOW for high temperature, no CAN data for 10 seconds, a selected CMU missing for 10 seconds, any cell at or above 4.20 V, or any cell at or below 2.80 V. Temperature and communication trips cannot be overridden.
+The current firmware is a standalone CMU monitoring/safety controller. It reads CMU CAN data, controls balancing, publishes MQTT telemetry, and drives one physical permissive: GPIO15 `BATTERY_SAFE_TO_USE` (active HIGH). GPIO15 goes LOW for high temperature, no CAN data for 10 seconds, a selected CMU missing for 10 seconds, any cell at or above 4.20 V, or any cell at or below 2.80 V. Temperature and communication trips cannot be overridden. The external breaker interface must open when this normally-HIGH permissive goes LOW.
 
-This firmware does not read amperage, perform coulomb counting, control inverter current, run ESS contactor sequencing, or emit inverter-side SIMPBMS frames. The T-Panel Battery Emulator owns inverter protocol and operating policy. SOC is voltage-derived telemetry/fallback data. The live device is at `http://192.168.2.90/`; its companion T-Panel is at `http://192.168.2.63/`.
+This firmware does not read amperage, perform coulomb counting, control inverter current, run ESS contactor sequencing, or emit inverter-side SIMPBMS frames. It has no live Battery Emulator or T-Panel integration; MQTT is its current external telemetry interface. A future dedicated RX/TX serial connection to the T-Panel will be specified and implemented as a separate interface. SOC is voltage-derived telemetry/fallback data. The live device is at `http://192.168.2.90/`.
 
 Balancing-cell count MQTT telemetry is deliberately published at a 10-second interval. Per-CMU maximum temperature topics and the overall pack maximum temperature topic are published with the other BMS telemetry.
 
@@ -187,8 +188,9 @@ The dashboard exposes these through `POST /api/command` with form field `command
 
 The active settings are defined in `src/bms_data.h`. They are limited to the
 high-temperature trip, voltage-derived SOC curve, expected-CMU masks, and CAN
-bus role. Emergency cell-voltage stops are fixed in `src/protection.cpp`;
-charge/discharge operating limits belong to the T-Panel Battery Emulator.
+bus role. Emergency cell-voltage stops and the GPIO15 permissive are fixed in
+`src/protection.cpp`; this project does not set inverter charge/discharge
+operating limits.
 
 ## Project Structure (historical entries marked below)
 
@@ -229,8 +231,6 @@ t2can_port/
 - See `AGENTS.md` for detailed development notes, hardware specifications, and CAN protocol documentation.
 - See `../docs/REMOTE_LOGGING_PLAN.md` for comprehensive remote logging implementation plan with IoT standards and best practices.
 
-## Credits
+## Hardware
 
-- Original project: [OutlanderPHEVBMS by tomdebree](https://github.com/tomdebree/OutlanderPHEVBMS)
-- Hardware: [LilyGO T-2Can](https://github.com/Xinyuan-LilyGO/T-2Can)
-- Development: AI-assisted port and enhancement
+- LilyGO T-2Can
