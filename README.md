@@ -5,11 +5,16 @@ It reads cell voltages and temperatures from Mitsubishi Outlander PHEV battery
 modules over CAN and provides monitoring, balancing, MQTT telemetry, and a
 physical safety permissive for DIY home energy storage.
 
-## Current deployed contract (19 August 2026)
+## Current runtime contract (verified 20 August 2026)
 
 The current firmware is a standalone CMU monitoring/safety controller. It reads CMU CAN data, controls balancing, publishes MQTT telemetry, and drives one physical permissive: GPIO15 `BATTERY_SAFE_TO_USE` (active HIGH). GPIO15 goes LOW for high temperature, no CAN data for 10 seconds, a selected CMU missing for 10 seconds, any cell at or above 4.20 V, or any cell at or below 2.80 V. Temperature and communication trips cannot be overridden. The external breaker interface must open when this normally-HIGH permissive goes LOW.
 
-This firmware does not read amperage, perform coulomb counting, control inverter current, run ESS contactor sequencing, or emit inverter-side SIMPBMS frames. It has no live Battery Emulator or T-Panel integration; MQTT is its current external telemetry interface. A future dedicated RX/TX serial connection to the T-Panel will be specified and implemented as a separate interface. SOC is voltage-derived telemetry/fallback data. The live device is at `http://192.168.2.90/`.
+This firmware does not read amperage, perform coulomb counting, control inverter current, run ESS contactor sequencing, or emit inverter-side SIMPBMS/FoxESS frames. It has no Battery-Emulator application dependency. MQTT is its current external telemetry interface. A future dedicated framed serial sender will feed the standalone PowerWall-Gateway on the T-CAN485; it is not implemented yet. SOC is voltage-derived telemetry/fallback data. The live device is at `http://192.168.2.90/`.
+
+The 20 August read-only `/api/summary` check reported 8/8 expected CMUs,
+248.56 V, 3.877–3.888 V cells, 18.2 °C maximum temperature, protection `OK`,
+fresh CAN data, and GPIO15 HIGH. This proves the observed runtime contract, not
+that the installed binary was built from the latest source commit.
 
 Balancing-cell count MQTT telemetry is deliberately published at a 10-second interval. Per-CMU maximum temperature topics and the overall pack maximum temperature topic are published with the other BMS telemetry.
 
@@ -221,9 +226,22 @@ operating limits.
 ## Status
 
 ✅ **Working**: CAN communication, voltage/temp reading, MQTT telemetry, web dashboard, serial interface, and web command bridge
-✅ **Verified**: Native tests 27/27 and the ESP32-S3 OTA build pass; the earlier 26-test image was deployed on 19 August 2026
+✅ **Source preserved**: `main` matched `origin/main` at the audit; the PlatformIO project is self-contained at repository root
+✅ **Local verification**: native tests previously passed 27/27 and the ESP32-S3 build passed after the source cleanup
 ⚠️ **Supervised**: GPIO15 safety permissive is deployed; physical breaker-trip cases still require end-to-end testing
+⚠️ **Deployment provenance**: the cleanup/flattening changes were not OTA-deployed, so the installed binary is not proven byte-for-byte from current `main`
+⚠️ **GitHub CI**: the latest `main` run fails because `test/mocks/Arduino.h` defines a `min` macro that collides with the Ubuntu/GCC standard library
+⚠️ **Repository metadata**: The GitHub repository is public and still marked as a fork of `Tom-evnut/OutlanderPHEVBMS`, although the local upstream remote and inherited firmware were removed
 ❌ **Intentionally absent**: amperage input, coulomb counting, ESS contactor control, and inverter-side SIMPBMS transmitter
+
+## Remaining work
+
+1. Fix the native Arduino mock and obtain a green GitHub `main` workflow.
+2. Build and deliberately OTA-deploy current `main`; record the commit and firmware hash plus post-OTA API/CAN/GPIO evidence.
+3. Physically prove GPIO15 LOW through the installed SSR/GEYA/V9 breaker chain for every fault and power-loss case.
+4. Wire/configure the second CMU CAN bus for the remaining conflicting IDs and verify 10/10 CMUs plus loss-of-either-bus behavior.
+5. Implement and bench-test the framed serial sender only after the T-CAN485 receiver pins and protocol are finalized in PowerWall-Gateway.
+6. Decide whether to detach/recreate the GitHub repository to remove the remaining fork metadata.
 
 ## More Information
 

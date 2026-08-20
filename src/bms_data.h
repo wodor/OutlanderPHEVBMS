@@ -64,7 +64,7 @@ struct CmuData {
 struct BmsSettings {
     // The only pack-level trip configured here is the high-temperature hard
     // stop. Cell-voltage emergency stops are fixed safety backstops in
-    // protection.cpp; charge/discharge limits belong to the T-Panel.
+    // protection.cpp; charge/discharge limits belong to PowerWall-Gateway.
     float overTemp;             // Overheat fault threshold (default: 65°C)
     // SOC voltage curve (for voltage-based SOC)
     // Maps voltage to SOC: [lowVolt_mV, lowSOC_%, highVolt_mV, highSOC_%]

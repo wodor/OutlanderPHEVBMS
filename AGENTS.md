@@ -12,8 +12,9 @@ This is the standalone Outlander PHEV CMU monitor for the LilyGO T-2Can board
 ### T-2Can Board
 - **MCU:** ESP32-S3 (240MHz, 320KB RAM, 16MB Flash)
 - **Two CAN interfaces:**
-  - **CAN-A:** External MCP2515 controller via SPI (used in this project)
-  - **CAN-B:** ESP32's built-in TWAI controller (available but unused)
+  - **CAN-A:** External MCP2515 controller via SPI
+  - **CAN-B:** ESP32's built-in TWAI controller
+- Both buses are implemented. The live eight-CMU configuration currently selects Bus B; the final conflicting-ID split is expected to use both buses.
 - **USB:** Native USB CDC for serial communication
 - **Serial port:** `/dev/cu.usbmodem2101` (may vary)
 
@@ -32,8 +33,10 @@ Built-in TWAI (CAN-B):
 ```
 
 ### MCP2515 Notes
-- Crystal: 8MHz (important for baud rate calculation)
-- Use `MCP_8MHZ` constant, not `MCP_16MHZ`
+- Crystal frequency must match the physical board; it is compile-time selectable
+  with `CAN_CRYSTAL_MHZ` and the current source default is 16 MHz.
+- Do not infer the oscillator from old handoff notes. Verify it before using
+  CAN-A; the live eight-CMU installation currently uses TWAI Bus B.
 - Requires reset sequence: HIGH → LOW → HIGH with delays
 
 ## Outlander BMS CAN Protocol
@@ -80,9 +83,9 @@ The battery pack has 10 CMUs (Cell Monitoring Units). Each CMU sends 3 message t
 ```
 
 ### Balance Command (TX)
-Send to ID `0x3C3` every ~400ms:
+Send to ID `0x3C3` every ~200 ms:
 ```
-[0]: Target voltage high byte (median valid cell mV)
+[0]: Target voltage high byte (eighth-lowest valid cell mV)
 [1]: Target voltage low byte
 [2]: Enable flag (1 = balance, 0 = off)
 [3]: 4 (fixed)
@@ -96,8 +99,9 @@ Send to ID `0x3C3` every ~400ms:
 - Platform: `espressif32 @6.5.0`
 - Board: `esp32s3_flash_16MB`
 - Framework: Arduino
-- Board definition: Uses T-2Can's custom board from `../../T-2Can/boards`
-- Libraries: Uses T-2Can's libraries from `../../T-2Can/libraries`
+- Board definition: self-contained in `boards/esp32s3_flash_16MB.json`
+- MCP2515 and network libraries: pinned through `platformio.ini`
+- No Battery-Emulator or external T-2Can checkout is required to build
 
 ### Testing
 The project includes unit tests that run on the `native` platform (x86/Linux):
@@ -109,10 +113,10 @@ pio test -e native -vv            # Run with verbose output
 
 Tests cover:
 - BMS data structures and calculations
-- SOC (State of Charge) calculations
-- Protection system logic
-- Current sensing framework
-- Safety-critical features
+- voltage-derived SOC calculation
+- persisted configuration validation
+- GPIO15 protection/fail-low behavior
+- pack statistics and safety-critical boundaries
 
 ### CI/CD Configuration
 
@@ -144,9 +148,14 @@ Tests cover:
 
 **Note for Copilot Agents**: The `copilot-setup-steps.yml` workflow runs automatically before you start working, ensuring PlatformIO and all dependencies are pre-installed and cached. This prevents firewall/network issues when you need to run PlatformIO commands, as everything is already available locally. The CI workflow provides the same setup for automated testing.
 
+**Current CI caveat (20 August 2026):** local native tests passed 27/27, but
+the latest GitHub `main` workflow is red because `test/mocks/Arduino.h` defines
+a `min` macro that collides with the Ubuntu/GCC standard library. Do not report
+CI green until that mock is fixed and a new workflow succeeds.
+
 ### Build Commands
 ```bash
-cd /Users/wodor/Projekty/PowerWall/OutlanderPHEVBMS
+cd "$(git rev-parse --show-toplevel)"
 pio run                                              # Build
 pio run -t upload --upload-port /dev/cu.usbmodem2101 # Upload
 pio device monitor --port /dev/cu.usbmodem2101      # Serial monitor
@@ -160,7 +169,11 @@ src/
 ├── config.h          # Hardware pins, constants
 ├── bms_data.h/cpp    # Data structures, global state
 ├── can_handler.h/cpp # CAN bus communication
-└── serial_menu.h/cpp # User interface
+├── protection.h/cpp  # GPIO15 safety permissive
+├── soc_calc.h/cpp    # Voltage-derived telemetry SOC
+├── mqtt_handler.h/cpp# MQTT telemetry
+├── web_server.h/cpp  # Dashboard and API
+└── serial_menu.h/cpp # Local command interface
 ```
 
 ### Key Patterns Used
@@ -172,136 +185,56 @@ src/
 ## Gotchas
 
 1. **USB Serial startup:** Add `delay(1000)` after `Serial.begin()` or early prints are lost
-2. **MCP2515 crystal:** T-2Can uses 8MHz, not 16MHz - wrong setting = wrong baud rate
+2. **MCP2515 crystal:** Source defaults to 16 MHz, but the exact board must be verified before using CAN-A; a mismatch gives the wrong baud rate
 3. **Port availability:** Close VS Code serial monitor before uploading
 4. **CAN termination:** May need 120Ω terminator on CAN bus depending on setup
 
-## Future Improvements
+## Responsibility Boundary
 
-- [ ] Add TWAI (CAN-B) support for dual-bus monitoring
-- [ ] Store settings in ESP32's NVS (flash) instead of RAM
-- [x] Port the full V2 features (SOC calculation, charger control, etc.)
-  - [x] SOC calculation with coulomb-counting and voltage fallback
-  - [x] Current sensing framework (analog and CAN)
-  - [x] Protection system (voltage/temp limits)
-  - [x] Pack statistics tracking
-  - [x] Enhanced web dashboard and serial interface
-  - [ ] Physical current sensor integration (requires hardware)
-  - [ ] Charger control (intentionally skipped)
-  - [ ] PWM gauge output
-  - [ ] Full settings persistence to NVS
+This repository owns:
 
-## V2 Features Implementation
+- CMU voltage and temperature acquisition over CAN A/B;
+- expected-CMU freshness checks and pack statistics;
+- optional CMU balancing control;
+- MQTT, web, and serial telemetry/diagnostics;
+- voltage-derived SOC telemetry;
+- the active-HIGH GPIO15 `BATTERY_SAFE_TO_USE` physical permissive.
 
-### State of Charge (SOC) Calculation
+This repository intentionally does **not** own:
 
-**Implementation**: `src/soc_calc.h` and `src/soc_calc.cpp`
+- pack-current measurement or coulomb counting;
+- FoxESS/inverter CAN framing;
+- charge/discharge operating-current policy;
+- ESS contactor or precharge sequencing;
+- Home Assistant operating-mode policy.
 
-The SOC system uses coulomb-counting (amp-hour integration) as the primary method, with voltage-based calculation as a fallback. Key features:
+Those inverter-facing responsibilities belong to the sibling
+`PowerWall-Gateway` repository. MQTT is the current supervised data transport;
+a future short framed serial sender will replace that dependency after the
+T-CAN485 receiver pins and protocol are finalized.
 
-- **Coulomb Counting**: Integrates current over time to track charge/discharge
-  ```cpp
-  SOC = ((ampSeconds * 0.27777777777778) / (capacity * parallelStrings * 1000)) * 100
-  ```
-- **Voltage-Based Fallback**: Linear interpolation between configured voltage points
-- **NVS Persistence**: SOC is saved every 60 seconds and restored on boot
-- **Manual Reset**: Can be reset to 100% via serial command 'r'
+## Current Protection Contract
 
-### Current Sensing
+- GPIO15 is active HIGH: HIGH means safe-to-use, LOW must trip the external breaker chain.
+- It drops LOW for high temperature, no global CMU CAN for 10 seconds, a selected CMU stale/missing for 10 seconds, cell voltage `>= 4200 mV`, or cell voltage `<= 2800 mV`.
+- Temperature and communication faults cannot be overridden.
+- The supervised override can suppress only the emergency voltage trip and requires fresh CMU data plus safe temperature.
+- The configured 4.00/3.20 V SOC endpoints are telemetry/design values, not the 4.20/2.80 V emergency thresholds.
 
-**Implementation**: `src/current_sense.h` and `src/current_sense.cpp`
+## Current State and Remaining Work
 
-Framework supports multiple sensor types:
-- **Dual-range analog**: High precision for low currents, wide range for high currents
-- **Single-range analog**: Simpler configuration
-- **CAN bus sensors**: LEM CAB300/500, IsaScale, Victron Lynx
+- `main` matched `origin/main` at the 20 August 2026 audit.
+- Local native tests previously passed 27/27 and the ESP32-S3 build passed.
+- The cleanup/flattening commits have not been OTA-proven; record the exact commit and image hash on the next deployment.
+- Fix the GitHub native CI macro collision and obtain a green run.
+- Physically prove GPIO15 LOW through the SSR/GEYA/V9 breaker chain for every fault and power-loss case.
+- Wire/configure the second CMU bus and prove loss-of-either-bus behavior with all 10 modules.
+- Implement the framed serial sender only after the PowerWall-Gateway receiver contract is fixed.
+- GitHub still labels this project as a fork even though its local upstream remote and inherited firmware have been removed.
 
-Features:
-- Low-pass exponential moving average filter
-- Configurable dead-band for noise rejection
-- Automatic range switching for dual-range sensors
-- Offset calibration support
+## OTA Updates
 
-**Note**: Current sensor hardware integration requires actual ADC pin configuration and testing.
-
-### Protection System
-
-**Implementation**: `src/protection.h` and `src/protection.cpp`
-
-Monitors and enforces safety limits:
-- **Overvoltage**: Cell voltage exceeds `overVoltage` threshold
-- **Undervoltage**: Cell voltage below `underVoltage` (with debounce)
-- **Overtemperature**: Temperature above `overTemp`
-- **Undertemperature**: Temperature below `underTemp`
-- **Cell Imbalance**: Voltage difference exceeds `cellGap`
-
-Each protection has hysteresis to prevent oscillation. Status reported via:
-- Serial console: `protectionGetStatus()`
-- Web dashboard: "Protection" field
-- API: `/api/summary` endpoint
-
-### Pack Statistics
-
-**Implementation**: Enhanced `BmsState.updatePackStatistics()` in `src/bms_data.h`
-
-Tracks across all modules:
-- Lowest/highest/average cell voltages
-- Median cell voltage used as the balancing target
-- Total pack voltage
-- Complete eight-cell voltage for each CMU module
-- Lowest/highest/average temperatures
-- Cell voltage delta (imbalance)
-
-Updated periodically and displayed in serial and web interfaces.
-
-### Data Structures
-
-**BmsSettings** (`src/bms_data.h`): Configuration parameters
-- Voltage limits (per cell)
-- Temperature limits
-- Current limits
-- Battery pack configuration (cells, capacity)
-- SOC voltage curve
-- Current sensor configuration
-- Protection thresholds
-
-**BmsState** (`src/bms_data.h`): Runtime state
-- CMU data (voltages, temps, balance status)
-- Pack statistics (min/max/avg)
-- SOC tracking (%, amp-seconds)
-- Current measurements
-- Protection flags
-- Timing variables
-
-### Integration
-
-**Main Loop** (`src/main.cpp`): Periodic tasks
-- **50ms**: Update current sensing
-- **100ms**: Update SOC calculation
-- **400ms**: Send CAN balance command
-- **500ms**: Check protection limits, update display
-- **1000ms**: Poll WiFi
-- **60000ms**: Save SOC to NVS
-
-**Serial Interface** (`src/serial_menu.cpp`): Enhanced display
-- Pack summary with SOC, voltage, current, temps
-- Detailed per-module statistics
-- Protection status
-- Commands: balance toggle, SOC reset, detailed view
-
-**Web Dashboard** (`src/web_server.cpp`): Real-time monitoring
-- Summary metrics including pack-wide cell delta and median balancing target
-- No Battery Emulator or inverter protocol integration
-- Color-coded cell display
-- Complete per-module voltage totals
-- Collapsible empty Bus A and Bus B sections
-- Confirmed device reboot control using a deferred main-loop restart
-- Module temperatures
-- Auto-refresh every 1 second
-- API endpoints for programmatic access
-
-**OTA Updates** (`src/wifi_handler.cpp`, `scripts/ota_upload.py`):
-- Arduino OTA is serviced on every main-loop iteration after WiFi connects
-- Hostname defaults to `outlander-bms.local`
-- `outlander_bms_ota` uploads to `192.168.2.90` by default
-- OTA authentication comes from ignored `.config.h`; never commit credentials
+- Arduino OTA is serviced on every main-loop iteration after WiFi connects.
+- Hostname defaults to `outlander-bms.local`.
+- `outlander_bms_ota` uploads to `192.168.2.90` by default.
+- OTA authentication comes from ignored `.config.h`; never commit credentials.
