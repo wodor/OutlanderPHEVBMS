@@ -59,6 +59,7 @@ static String buildModuleJson(int moduleIndex) {
     json += "\"cmuId\":" + String(cmuId) + ",";
     json += "\"bus\":\"" + String(busIndex == 0 ? "A" : "B") + "\",";
     json += "\"present\":" + String(cmu.present ? "true" : "false") + ",";
+    json += "\"selectedForPack\":" + String(isModuleSelectedForPack(moduleIndex) ? "true" : "false") + ",";
     json += "\"moduleVoltageMv\":";
     json += moduleVoltageMv > 0 ? String(moduleVoltageMv) : "null";
     json += ",";
@@ -204,6 +205,11 @@ static String buildSummaryJson() {
     json += "},";
     json += "\"hasData\":" + String(presentCount > 0 ? "true" : "false") + ",";
     json += "\"expectedTotal\":" + String(expectedCount) + ",";
+    const int seriesCellCount = expectedCount * CELLS_PER_MODULE;
+    json += "\"maxDesignVoltage\":" +
+            String((g_bmsSettings.socVoltageCurve[2] * seriesCellCount) / 1000.0f, 1) + ",";
+    json += "\"minDesignVoltage\":" +
+            String((g_bmsSettings.socVoltageCurve[0] * seriesCellCount) / 1000.0f, 1) + ",";
     json += "\"expectedCmusA\":" + String(g_bmsSettings.expectedCmusA) + ",";
     json += "\"expectedCmusB\":" + String(g_bmsSettings.expectedCmusB) + ",";
     json += "\"io\":{\"batterySafeToUse\":" + String(batterySafeToUse ? "true" : "false") + "}";
@@ -230,6 +236,7 @@ static String buildDetailedStatsJson() {
         firstModule = false;
         json += "{\"bus\":\"" + String(module < 10 ? "A" : "B") +
                 "\",\"cmuId\":" + String((module % 10) + 1) +
+                ",\"selectedForPack\":" + String(isModuleSelectedForPack(module) ? "true" : "false") +
                 ",\"balanceStatus\":" + String(cmu.balanceStatus) +
                 ",\"voltages\":[";
         for (int cell = 0; cell < CELLS_PER_MODULE; ++cell) {

@@ -61,6 +61,23 @@ void test_pack_statistics_voltages() {
     TEST_ASSERT_FLOAT_WITHIN(0.01f, expectedAvg, g_bmsState.avgCellVoltage);
 }
 
+void test_pack_statistics_excludes_unselected_modules() {
+    g_bmsSettings.expectedCmusA = 0x001;
+    g_bmsSettings.expectedCmusB = 0x000;
+
+    g_bmsState.modules[0].present = true;
+    g_bmsState.modules[0].voltages[0] = 3600;
+    g_bmsState.modules[1].present = true;
+    g_bmsState.modules[1].voltages[0] = 4200;
+
+    g_bmsState.updatePackStatistics();
+
+    TEST_ASSERT_TRUE(g_bmsState.modules[1].present);
+    TEST_ASSERT_EQUAL_INT32(3600, g_bmsState.lowestCellMv);
+    TEST_ASSERT_EQUAL_INT32(3600, g_bmsState.highestCellMv);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 3.6f, g_bmsState.packVoltage);
+}
+
 /**
  * Test pack statistics calculation - temperatures
  */

@@ -14,7 +14,6 @@ extern unsigned long g_mockMillis;
 extern int g_digitalWriteState[256];
 
 static void makeOneFreshSelectedCmu() {
-    g_bmsSettings.useBusAForCmu = true;
     g_bmsSettings.expectedCmusA = 0x001;
     g_bmsSettings.expectedCmusB = 0x000;
     g_bmsState.modules[0].present = true;

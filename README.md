@@ -22,7 +22,7 @@ Balancing-cell count MQTT telemetry is deliberately published at a 10-second int
 
 ### Current Capabilities
 
-- **CAN Bus Communication**: Reads data from up to 20 Outlander PHEV CMUs across two buses
+- **CAN Bus Communication**: Both CAN-A (MCP2515) and CAN-B (TWAI) are dedicated CMU buses, reading up to 20 Outlander PHEV CMUs across isolated segments. MQTT is the current external transport; this firmware does not emit Battery Emulator or inverter CAN traffic.
 - **Cell Voltage Monitoring**: Tracks 8 cells per configured CMU
 - **Temperature Monitoring**: 3 temperature sensors per CMU
 - **Cell Balancing Control**: Uses the eighth-lowest valid cell voltage, preserving the lowest seven cells from discharge

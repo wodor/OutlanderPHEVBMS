@@ -13,6 +13,7 @@ extern BmsSettings g_bmsSettings;
 
 // Test functions from test_bms_data.cpp
 void test_pack_statistics_voltages();
+void test_pack_statistics_excludes_unselected_modules();
 void test_pack_statistics_temperatures();
 void test_pack_statistics_invalid_temps();
 void test_pack_statistics_no_modules();
@@ -71,6 +72,7 @@ int main(int argc, char **argv) {
 
     // BMS Data tests
     RUN_TEST(test_pack_statistics_voltages);
+    RUN_TEST(test_pack_statistics_excludes_unselected_modules);
     RUN_TEST(test_pack_statistics_temperatures);
     RUN_TEST(test_pack_statistics_invalid_temps);
     RUN_TEST(test_pack_statistics_no_modules);

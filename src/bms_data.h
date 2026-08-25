@@ -75,19 +75,28 @@ struct BmsSettings {
     uint16_t expectedCmusA;     // Expected CMUs on Bus A
     uint16_t expectedCmusB;     // Expected CMUs on Bus B
 
-    // CAN bus role configuration
-    bool useBusAForCmu;         // Whether selected CMUs are expected on Bus A
-
     // Constructor with defaults
     BmsSettings() :
         overTemp(65.0f),
         socVoltageCurve{3500, 0, 4100, 100},
         useVoltageSoc(true),
         expectedCmusA(0x3FF),   // Default: expect all 10 CMUs on Bus A
-        expectedCmusB(0x3FF),   // Default: expect all 10 CMUs on Bus B (enabled)
-        useBusAForCmu(false)
+        expectedCmusB(0x3FF)    // Default: expect all 10 CMUs on Bus B
     {}
 };
+
+// A detected CMU may be left unselected while a second CAN segment is being
+// surveyed. Its data remains available for diagnostics, but must never affect
+// pack-derived telemetry or protection.
+extern BmsSettings g_bmsSettings;
+
+inline bool isModuleSelectedForPack(int moduleIndex) {
+    if (moduleIndex < 0 || moduleIndex >= BMS_MODULE_COUNT) return false;
+    const uint16_t expectedMask = moduleIndex < 10
+        ? g_bmsSettings.expectedCmusA
+        : g_bmsSettings.expectedCmusB;
+    return (expectedMask & (1U << (moduleIndex % 10))) != 0;
+}
 
 /**
  * Complete BMS state - holds all data from the battery pack
@@ -163,7 +172,7 @@ struct BmsState {
         long validCellVoltages[BMS_MODULE_COUNT * CELLS_PER_MODULE];
 
         for (int m = 0; m < BMS_MODULE_COUNT; m++) {
-            if (!modules[m].present) continue;
+            if (!modules[m].present || !isModuleSelectedForPack(m)) continue;
 
             // Process cell voltages
             // Valid Li-ion cell voltage range: 1500mV - 4500mV
@@ -241,7 +250,7 @@ struct BmsState {
      */
     bool hasAnyData() const {
         for (int m = 0; m < BMS_MODULE_COUNT; m++) {
-            if (modules[m].present) return true;
+            if (modules[m].present && isModuleSelectedForPack(m)) return true;
         }
         return false;
     }
@@ -273,7 +282,6 @@ struct BmsState {
  * The actual variable is created in bms_data.cpp.
  */
 extern BmsState g_bmsState;
-extern BmsSettings g_bmsSettings;
 
 /**
  * Load settings from NVS

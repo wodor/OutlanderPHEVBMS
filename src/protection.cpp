@@ -18,7 +18,7 @@ constexpr unsigned long SUPERVISED_OVERRIDE_DURATION_MS = 10UL * 60UL * 1000UL;
 
 bool configuredCmusAreFresh(unsigned long now) {
     for (int cmu = 0; cmu < 10; ++cmu) {
-        if (g_bmsSettings.useBusAForCmu && (g_bmsSettings.expectedCmusA & (1U << cmu))) {
+        if (g_bmsSettings.expectedCmusA & (1U << cmu)) {
             const CmuData& data = g_bmsState.modules[cmu];
             if (!data.present || now - data.lastSeenTime >= CAN_DATA_TIMEOUT_MS) return false;
         }

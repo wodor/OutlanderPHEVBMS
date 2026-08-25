@@ -45,6 +45,7 @@ int s_lastMaximumTempTenths = -10000;
 long s_lastCellDeltaMv = -1;
 long s_lastMinimumCellMv = -1;
 long s_lastMaximumCellMv = -1;
+String s_lastDesignVoltage;
 int s_lastBalancingCells = -1;
 uint32_t s_heartbeatSequence = 0;
 unsigned long s_lastBalancingCountPublish = 0;
@@ -248,6 +249,38 @@ void publishFastSummary() {
     }
     if (s_forcePublish || packVoltageMv != s_lastPackVoltageMv) {
         publish(root + "voltage", String(packVoltageMv / 1000.0f, 2)); s_lastPackVoltageMv = packVoltageMv;
+    }
+    // The gateway must use the BMS's configured voltage-SOC endpoints, rather
+    // than a copy compiled into its own firmware. Publish both endpoints in
+    // one retained message so it cannot combine a new maximum with an old
+    // minimum after a configuration change.
+    uint16_t selectedModuleCount = 0;
+    for (int module = 0; module < BMS_MODULE_COUNT; ++module) {
+        if (isModuleSelectedForPack(module)) ++selectedModuleCount;
+    }
+    const uint16_t seriesCellCount = selectedModuleCount * CELLS_PER_MODULE;
+    const String designVoltage = String(
+        (g_bmsSettings.socVoltageCurve[2] * seriesCellCount) / 1000.0f, 1) +
+        "," +
+        String((g_bmsSettings.socVoltageCurve[0] * seriesCellCount) / 1000.0f, 1);
+    if (s_forcePublish || designVoltage != s_lastDesignVoltage) {
+        // Keep the existing Home Assistant design-voltage entities current.
+        // The gateway consumes the combined topic above to update both values
+        // atomically, while these individual retained topics preserve the UI
+        // contract used by the previous BMS firmware.
+        publish(root + "design_maximum_voltage",
+                String((g_bmsSettings.socVoltageCurve[2] * seriesCellCount) / 1000.0f, 1));
+        publish(root + "design_minimum_voltage",
+                String((g_bmsSettings.socVoltageCurve[0] * seriesCellCount) / 1000.0f, 1));
+        // Home Assistant's existing discovery records use these shorter
+        // state-topic names. Retain them during the migration so existing
+        // dashboards update without an entity-registry rewrite.
+        publish(root + "design_max_voltage",
+                String((g_bmsSettings.socVoltageCurve[2] * seriesCellCount) / 1000.0f, 1));
+        publish(root + "design_min_voltage",
+                String((g_bmsSettings.socVoltageCurve[0] * seriesCellCount) / 1000.0f, 1));
+        publish(root + "design_voltage", designVoltage);
+        s_lastDesignVoltage = designVoltage;
     }
     if (s_forcePublish || avgTempTenths != s_lastAvgTempTenths) {
         publish(root + "average_temperature", String(avgTempTenths / 10.0f, 1)); s_lastAvgTempTenths = avgTempTenths;

@@ -104,12 +104,12 @@ static void processFrame(uint32_t canId, uint8_t dlc, uint8_t* data, int busInde
     }
 
     if (!expected) {
-        // Received message from unexpected CMU - still process it but maybe log?
         if (g_bmsState.debugMode) {
             Serial.printf("[CAN-%c] Unexpected CMU ID:0x%03X\n",
                           (busIndex == 0 ? 'A' : 'B'), canId);
         }
-        // return; // Uncomment to ignore unexpected CMUs
+        // Continue recording it for diagnostics. updatePackStatistics() and
+        // protection deliberately exclude unselected CMUs from pack state.
     }
 
     // This is a valid CMU message
@@ -118,7 +118,9 @@ static void processFrame(uint32_t canId, uint8_t dlc, uint8_t* data, int busInde
     // Mark this CMU as present
     g_bmsState.modules[cmuIndex].present = true;
     g_bmsState.modules[cmuIndex].lastSeenTime = millis();
-    g_bmsState.lastCanMessageTime = millis();
+    if (expected) {
+        g_bmsState.lastCanMessageTime = millis();
+    }
 
     CmuData& cmu = g_bmsState.modules[cmuIndex];
 
@@ -280,9 +282,7 @@ void canPoll() {
 
     while (s_canA.readMessage(&s_rxFrame) == MCP2515::ERROR_OK) {
         s_canStats.readAttempts++;
-        if (g_bmsSettings.useBusAForCmu) {
-            processFrame(s_rxFrame.can_id, s_rxFrame.can_dlc, s_rxFrame.data, 0);
-        }
+        processFrame(s_rxFrame.can_id, s_rxFrame.can_dlc, s_rxFrame.data, 0);
     }
 
     // -------------------------------------------------------------------------
@@ -349,8 +349,9 @@ void canSendBalanceCommand() {
         s_txFrame.data[2] = 0;  // Balancing disabled
     }
 
-    // Send to Bus A (MCP2515) if it's assigned to CMUs
-    if (g_bmsSettings.useBusAForCmu && g_bmsSettings.expectedCmusA != 0) {
+    // Both physical CAN buses are CMU buses. The expected-CMU masks select
+    // which modules receive the command on each isolated segment.
+    if (g_bmsSettings.expectedCmusA != 0) {
         if (balancingCommandEnabled) {
             s_canStats.balanceTxAttempts++;
             s_canStats.lastBalanceBusMask |= 0x01;
