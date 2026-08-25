@@ -23,6 +23,8 @@ void test_has_any_data();
 void test_get_pack_voltage_parallel_strings();
 void test_settings_defaults();
 void test_settings_soc_curve_save_reload();
+void test_settings_load_migrates_historical_soc_high_voltage_endpoints();
+void test_settings_load_preserves_current_and_emergency_soc_high_voltage_endpoints();
 void test_soc_curve_validation_accepts_exact_ordered_values();
 void test_soc_curve_validation_rejects_invalid_without_mutation();
 void test_cmu_data_init();
@@ -79,6 +81,8 @@ int main(int argc, char **argv) {
     RUN_TEST(test_get_pack_voltage_parallel_strings);
     RUN_TEST(test_settings_defaults);
     RUN_TEST(test_settings_soc_curve_save_reload);
+    RUN_TEST(test_settings_load_migrates_historical_soc_high_voltage_endpoints);
+    RUN_TEST(test_settings_load_preserves_current_and_emergency_soc_high_voltage_endpoints);
     RUN_TEST(test_soc_curve_validation_accepts_exact_ordered_values);
     RUN_TEST(test_soc_curve_validation_rejects_invalid_without_mutation);
     RUN_TEST(test_cmu_data_init);

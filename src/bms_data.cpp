@@ -20,6 +20,7 @@
 // Preferences object for NVS storage
 static Preferences s_prefs;
 static const char* NVS_NAMESPACE = "bms";
+static constexpr int VOLTAGE_POLICY_REVISION = 1;
 
 // =============================================================================
 // GLOBAL STATE DEFINITION
@@ -42,6 +43,30 @@ BmsState g_bmsState;
  */
 BmsSettings g_bmsSettings;
 
+namespace {
+// Apply the agreed normal-use voltage policy to the two historical endpoints
+// that this firmware has previously persisted.  4.20 V remains exclusively
+// the emergency ceiling enforced in protection.cpp, not an SOC/design target.
+bool migrateSocHighVoltageEndpoint() {
+    int& highVoltageMv = g_bmsSettings.socVoltageCurve[2];
+    if (highVoltageMv == 4000) {
+        highVoltageMv = 4050;
+        return true;
+    }
+    if (highVoltageMv == 4050) {
+        highVoltageMv = 4100;
+        return true;
+    }
+    return false;
+}
+
+void recordVoltagePolicyMigration() {
+    s_prefs.begin(NVS_NAMESPACE, false);
+    s_prefs.putInt("vPolRev", VOLTAGE_POLICY_REVISION);
+    s_prefs.end();
+}
+}  // namespace
+
 void settingsLoad() {
     s_prefs.begin(NVS_NAMESPACE, true); // Read-only
 
@@ -57,8 +82,17 @@ void settingsLoad() {
     g_bmsSettings.socVoltageCurve[2] = s_prefs.getInt("socV2", g_bmsSettings.socVoltageCurve[2]);
     g_bmsSettings.socVoltageCurve[3] = s_prefs.getInt("socV3", g_bmsSettings.socVoltageCurve[3]);
     g_bmsSettings.useVoltageSoc = s_prefs.getBool("useVSoc", g_bmsSettings.useVoltageSoc);
+    const bool needsVoltagePolicyMigration =
+        s_prefs.getInt("vPolRev", 0) < VOLTAGE_POLICY_REVISION;
 
     s_prefs.end();
+
+    if (needsVoltagePolicyMigration && migrateSocHighVoltageEndpoint()) {
+        Serial.printf("[BMS] Migrated SOC high-voltage endpoint to %d mV\n",
+                      g_bmsSettings.socVoltageCurve[2]);
+        settingsSave();
+        recordVoltagePolicyMigration();
+    }
 
     Serial.println("[BMS] Settings loaded from NVS");
     Serial.printf("[BMS] Expected CMUs A: 0x%03X, B: 0x%03X\n",

@@ -219,7 +219,7 @@ T-CAN485 receiver pins and protocol are finalized.
 - It drops LOW for high temperature, no global CMU CAN for 10 seconds, a selected CMU stale/missing for 10 seconds, cell voltage `>= 4200 mV`, or cell voltage `<= 2800 mV`.
 - Temperature and communication faults cannot be overridden.
 - The supervised override can suppress only the emergency voltage trip and requires fresh CMU data plus safe temperature.
-- The configured 4.00/3.20 V SOC endpoints are telemetry/design values, not the 4.20/2.80 V emergency thresholds.
+- The configured 4.05/3.20 V SOC endpoints are telemetry/design values, not the 4.20/2.80 V emergency thresholds. Historical 4.00 V and 4.05 V high endpoints migrate to 4.05 V and 4.10 V respectively; 4.20 V is never a normal target.
 
 ## Current State and Remaining Work
 

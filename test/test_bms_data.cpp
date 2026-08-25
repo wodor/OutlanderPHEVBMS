@@ -248,6 +248,42 @@ void test_settings_soc_curve_save_reload() {
     TEST_ASSERT_FALSE(g_bmsSettings.useVoltageSoc);
 }
 
+void test_settings_load_migrates_historical_soc_high_voltage_endpoints() {
+    const int legacyEndpoints[] = {4000, 4050};
+    const int expectedEndpoints[] = {4050, 4100};
+
+    for (size_t i = 0; i < sizeof(legacyEndpoints) / sizeof(legacyEndpoints[0]); ++i) {
+        Preferences::clearAll();
+        g_bmsSettings = BmsSettings();
+        g_bmsSettings.socVoltageCurve[2] = legacyEndpoints[i];
+        settingsSave();
+
+        g_bmsSettings = BmsSettings();
+        settingsLoad();
+        TEST_ASSERT_EQUAL_INT(expectedEndpoints[i], g_bmsSettings.socVoltageCurve[2]);
+
+        // The migration must survive the next boot rather than being applied
+        // only in RAM.
+        g_bmsSettings = BmsSettings();
+        settingsLoad();
+        TEST_ASSERT_EQUAL_INT(expectedEndpoints[i], g_bmsSettings.socVoltageCurve[2]);
+    }
+}
+
+void test_settings_load_preserves_current_and_emergency_soc_high_voltage_endpoints() {
+    const int endpoints[] = {4100, 4200};
+    for (size_t i = 0; i < sizeof(endpoints) / sizeof(endpoints[0]); ++i) {
+        Preferences::clearAll();
+        g_bmsSettings = BmsSettings();
+        g_bmsSettings.socVoltageCurve[2] = endpoints[i];
+        settingsSave();
+
+        g_bmsSettings = BmsSettings();
+        settingsLoad();
+        TEST_ASSERT_EQUAL_INT(endpoints[i], g_bmsSettings.socVoltageCurve[2]);
+    }
+}
+
 void test_soc_curve_validation_accepts_exact_ordered_values() {
     int curve[4] = {1, 2, 3, 4};
     TEST_ASSERT_TRUE(parseSocVoltageCurve("3500,0,4100,100", curve));

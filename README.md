@@ -196,6 +196,11 @@ bus role. Emergency cell-voltage stops and the GPIO15 permissive are fixed in
 `src/protection.cpp`; this project does not set inverter charge/discharge
 operating limits.
 
+On startup, the firmware migrates the historical voltage-SOC high endpoints
+from 4.00 V to 4.05 V and from 4.05 V to 4.10 V, then persists the result.
+The 4.20 V emergency cell-voltage stop remains a separate absolute safety
+ceiling and is never a normal SOC/design target.
+
 ## Project Structure (historical entries marked below)
 
 ```
