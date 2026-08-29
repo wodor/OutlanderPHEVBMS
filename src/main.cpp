@@ -180,9 +180,6 @@ void loop() {
     //    This reads all available messages and updates g_bmsState
     canPoll();
 
-    // Complete any requested non-blocking balance disable/re-enable pulse.
-    canTick();
-
     // 3. Periodic task: Send balance command at INTERVAL_CAN_SEND_MS (200 ms)
     if (millis() - s_lastCanSendTime >= INTERVAL_CAN_SEND_MS) {
         s_lastCanSendTime = millis();

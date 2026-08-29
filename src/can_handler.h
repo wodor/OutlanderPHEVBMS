@@ -99,9 +99,6 @@ struct CanStats {
     uint32_t twaiArbLostCount;
     uint32_t twaiBusErrorCount;
     uint32_t twaiLastStatusTime;  // millis() of the cached Bus B status
-    bool     balanceRecoveryActive;
-    uint32_t balanceRecoveryRemainingMs;
-    uint32_t balanceRecoveryCount;
 };
 
 /**
@@ -120,21 +117,6 @@ struct CanHardwareDiagnostics {
 };
 
 CanHardwareDiagnostics canGetHardwareDiagnostics();
-
-/**
- * Start one manual balance-command recovery cycle: send the normal disabled
- * balance frame for two seconds, then restore balancing. This does not reboot
- * the controller or claim to reset any CMU.
- *
- * @return true when the cycle was started; false when balancing is off or a
- *         recovery cycle is already in progress.
- */
-bool canRequestBalanceRecovery();
-
-/**
- * Service non-blocking CAN state transitions. Call once per main-loop pass.
- */
-void canTick();
 
 /**
  * Convert a cached TWAI state value to a stable diagnostic string.

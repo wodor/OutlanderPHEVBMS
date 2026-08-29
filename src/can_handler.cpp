@@ -33,14 +33,6 @@ static struct can_frame s_txFrame;  // Frame to transmit
 // CAN statistics for diagnostics
 static CanStats s_canStats = {};
 
-// Manual balancing recovery uses the known protocol disable flag for a short,
-// controlled interval. It deliberately does not restart the ESP32 or assert
-// that a CMU has been reset.
-static bool s_balanceRecoveryActive = false;
-static bool s_balanceRecoveryRestoreEnabled = false;
-static uint32_t s_balanceRecoveryEndsAt = 0;
-static uint32_t s_balanceRecoveryCount = 0;
-static constexpr uint32_t BALANCE_RECOVERY_DISABLE_MS = 2000;
 static uint32_t s_lastTwaiStatusTime = 0;
 static constexpr uint32_t TWAI_STATUS_REFRESH_MS = 500;
 
@@ -305,36 +297,16 @@ void canPoll() {
     }
 }
 
-void canTick() {
-    if (!s_balanceRecoveryActive) {
-        return;
-    }
-
-    if (static_cast<int32_t>(millis() - s_balanceRecoveryEndsAt) < 0) {
-        return;
-    }
-
-    s_balanceRecoveryActive = false;
-    if (s_balanceRecoveryRestoreEnabled) {
-        g_bmsState.balancingEnabled = true;
-        Serial.println("[CAN] Balance recovery pulse complete; balancing restored");
-    }
-    s_balanceRecoveryRestoreEnabled = false;
-}
-
 void canSendBalanceCommand() {
     // Refresh the target immediately before sending. The target is the eighth
     // lowest valid cell, preserving the lowest seven cells from discharge.
     g_bmsState.updatePackStatistics();
     const long balanceTargetMv = g_bmsState.balanceTargetMv;
-
-    // Keep the recovery pulse authoritative even if another interface toggles
-    // the operator-facing balancing flag while the pulse is in progress.
     const bool balancingCommandEnabled =
-        g_bmsState.balancingEnabled && !s_balanceRecoveryActive;
+        g_bmsState.balancingEnabled &&
+        balanceTargetMv >= 1500 && balanceTargetMv <= 4500;
 
-    if (balancingCommandEnabled &&
-        balanceTargetMv >= 1500 && balanceTargetMv <= 4500) {
+    if (balancingCommandEnabled) {
         // highByte/lowByte split a 16-bit value into two bytes
         s_txFrame.data[0] = highByte(balanceTargetMv);
         s_txFrame.data[1] = lowByte(balanceTargetMv);
@@ -413,13 +385,7 @@ bool canIsBusBEnabled() {
 }
 
 CanStats canGetStats() {
-    CanStats stats = s_canStats;
-    stats.balanceRecoveryActive = s_balanceRecoveryActive;
-    stats.balanceRecoveryCount = s_balanceRecoveryCount;
-    stats.balanceRecoveryRemainingMs = s_balanceRecoveryActive
-        ? static_cast<uint32_t>(s_balanceRecoveryEndsAt - millis())
-        : 0;
-    return stats;
+    return s_canStats;
 }
 
 CanHardwareDiagnostics canGetHardwareDiagnostics() {
@@ -432,20 +398,6 @@ CanHardwareDiagnostics canGetHardwareDiagnostics() {
     diagnostics.spiOk = (diagnostics.status != 0xFF) ||
                         (diagnostics.errorFlags != 0xFF);
     return diagnostics;
-}
-
-bool canRequestBalanceRecovery() {
-    if (!g_bmsState.balancingEnabled || s_balanceRecoveryActive) {
-        return false;
-    }
-
-    s_balanceRecoveryRestoreEnabled = true;
-    s_balanceRecoveryActive = true;
-    s_balanceRecoveryEndsAt = millis() + BALANCE_RECOVERY_DISABLE_MS;
-    s_balanceRecoveryCount++;
-    g_bmsState.balancingEnabled = false;
-    Serial.println("[CAN] Balance recovery pulse started: disabling commands for 2 seconds");
-    return true;
 }
 
 const char* canGetTwaiStateName(uint8_t state) {

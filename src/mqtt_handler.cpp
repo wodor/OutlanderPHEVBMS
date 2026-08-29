@@ -11,6 +11,7 @@
 
 #include "bms_data.h"
 #include "config.h"
+#include "current_taper.h"
 #include "protection.h"
 #include "soc_calc.h"
 #include <WiFi.h>
@@ -50,6 +51,7 @@ long s_lastCellDeltaMv = -1;
 long s_lastMinimumCellMv = -1;
 long s_lastMaximumCellMv = -1;
 String s_lastDesignVoltage;
+String s_lastCurrentLimits;
 int s_lastBalancingCells = -1;
 uint32_t s_heartbeatSequence = 0;
 unsigned long s_lastBalancingCountPublish = 0;
@@ -132,6 +134,8 @@ void publishPackDiscovery() {
     publishDiscovery("outlander_bms_all_cell_voltage_delta", "All-Cell Voltage Delta", root + "cell_voltage_delta", "mV", "voltage", "measurement", device, 0);
     publishDiscovery("outlander_bms_minimum_cell_voltage", "Minimum Cell Voltage", root + "minimum_cell_voltage", "V", "voltage", "measurement", device, 3);
     publishDiscovery("outlander_bms_maximum_cell_voltage", "Maximum Cell Voltage", root + "maximum_cell_voltage", "V", "voltage", "measurement", device, 3);
+    publishDiscovery("outlander_bms_charge_current_limit", "Charge Current Limit", root + "charge_current_limit", "A", "current", "measurement", device, 1);
+    publishDiscovery("outlander_bms_discharge_current_limit", "Discharge Current Limit", root + "discharge_current_limit", "A", "current", "measurement", device, 1);
     publishDiscovery("outlander_bms_balancing_cell_count", "Balancing Cell Count", root + "balancing_cell_count", "", "", "measurement", device, 0);
     publishDiscovery("outlander_bms_protection_state", "Protection State", root + "protection_state", "", "", "", device);
     s_packDiscoverySent = true;
@@ -334,6 +338,17 @@ void publishFastSummary() {
     if (s_forcePublish || g_bmsState.highestCellMv != s_lastMaximumCellMv) {
         publish(root + "maximum_cell_voltage", String(g_bmsState.highestCellMv / 1000.0f, 3));
         s_lastMaximumCellMv = g_bmsState.highestCellMv;
+    }
+    // One retained payload lets the gateway update both directions atomically.
+    // The individual topics are for Home Assistant observability only.
+    const CurrentLimits limits = currentTaperCalculate();
+    const String currentLimits = String(limits.chargeDa / 10.0f, 1) + "," +
+                                 String(limits.dischargeDa / 10.0f, 1);
+    if (s_forcePublish || currentLimits != s_lastCurrentLimits) {
+        publish(root + "charge_current_limit", String(limits.chargeDa / 10.0f, 1));
+        publish(root + "discharge_current_limit", String(limits.dischargeDa / 10.0f, 1));
+        publish(root + "current_limits", currentLimits);
+        s_lastCurrentLimits = currentLimits;
     }
 }
 

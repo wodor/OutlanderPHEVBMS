@@ -64,8 +64,8 @@ struct CmuData {
  */
 struct BmsSettings {
     // The only pack-level trip configured here is the high-temperature hard
-    // stop. Cell-voltage emergency stops are fixed safety backstops in
-    // protection.cpp; charge/discharge limits belong to PowerWall-Gateway.
+    // stop. Cell-voltage emergency stops remain fixed safety backstops in
+    // protection.cpp. The taper settings below are normal operating limits.
     float overTemp;             // Overheat fault threshold (default: 65°C)
     // Legacy endpoints remain available to existing APIs and design-voltage
     // consumers. The authoritative telemetry mapping is the monotonic point
@@ -79,6 +79,19 @@ struct BmsSettings {
     uint16_t expectedCmusA;     // Expected CMUs on Bus A
     uint16_t expectedCmusB;     // Expected CMUs on Bus B
 
+    // Normal-use current taper, stored in mV and deciamps (0.1 A).
+    // Charge is governed by the highest selected cell; discharge by the lowest.
+    int chargeFullVoltageMv;
+    int chargeReducedVoltageMv;
+    int chargeStopVoltageMv;
+    int chargeFullCurrentDa;
+    int chargeReducedCurrentDa;
+    int dischargeFullVoltageMv;
+    int dischargeReducedVoltageMv;
+    int dischargeStopVoltageMv;
+    int dischargeFullCurrentDa;
+    int dischargeReducedCurrentDa;
+
     // Constructor with defaults
     BmsSettings() :
         overTemp(65.0f),
@@ -89,7 +102,17 @@ struct BmsSettings {
         socCurvePointCount(12),
         useVoltageSoc(true),
         expectedCmusA(0x3FF),   // Default: expect all 10 CMUs on Bus A
-        expectedCmusB(0x3FF)    // Default: expect all 10 CMUs on Bus B
+        expectedCmusB(0x3FF),   // Default: expect all 10 CMUs on Bus B
+        chargeFullVoltageMv(3900),
+        chargeReducedVoltageMv(4050),
+        chargeStopVoltageMv(4100),
+        chargeFullCurrentDa(200),
+        chargeReducedCurrentDa(10),
+        dischargeFullVoltageMv(3400),
+        dischargeReducedVoltageMv(3250),
+        dischargeStopVoltageMv(3200),
+        dischargeFullCurrentDa(200),
+        dischargeReducedCurrentDa(10)
     {}
 };
 

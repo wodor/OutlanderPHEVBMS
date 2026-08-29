@@ -146,6 +146,16 @@ void settingsLoad() {
     g_bmsSettings.socVoltageCurve[2] = s_prefs.getInt("socV2", g_bmsSettings.socVoltageCurve[2]);
     g_bmsSettings.socVoltageCurve[3] = s_prefs.getInt("socV3", g_bmsSettings.socVoltageCurve[3]);
     g_bmsSettings.useVoltageSoc = s_prefs.getBool("useVSoc", g_bmsSettings.useVoltageSoc);
+    g_bmsSettings.chargeFullVoltageMv = s_prefs.getInt("chgFullV", g_bmsSettings.chargeFullVoltageMv);
+    g_bmsSettings.chargeReducedVoltageMv = s_prefs.getInt("chgRedV", g_bmsSettings.chargeReducedVoltageMv);
+    g_bmsSettings.chargeStopVoltageMv = s_prefs.getInt("chgStopV", g_bmsSettings.chargeStopVoltageMv);
+    g_bmsSettings.chargeFullCurrentDa = s_prefs.getInt("chgFullI", g_bmsSettings.chargeFullCurrentDa);
+    g_bmsSettings.chargeReducedCurrentDa = s_prefs.getInt("chgRedI", g_bmsSettings.chargeReducedCurrentDa);
+    g_bmsSettings.dischargeFullVoltageMv = s_prefs.getInt("disFullV", g_bmsSettings.dischargeFullVoltageMv);
+    g_bmsSettings.dischargeReducedVoltageMv = s_prefs.getInt("disRedV", g_bmsSettings.dischargeReducedVoltageMv);
+    g_bmsSettings.dischargeStopVoltageMv = s_prefs.getInt("disStopV", g_bmsSettings.dischargeStopVoltageMv);
+    g_bmsSettings.dischargeFullCurrentDa = s_prefs.getInt("disFullI", g_bmsSettings.dischargeFullCurrentDa);
+    g_bmsSettings.dischargeReducedCurrentDa = s_prefs.getInt("disRedI", g_bmsSettings.dischargeReducedCurrentDa);
     const bool needsVoltagePolicyMigration =
         s_prefs.getInt("vPolRev", 0) < VOLTAGE_POLICY_REVISION;
 
@@ -198,6 +208,14 @@ void settingsLoad() {
                   g_bmsSettings.socVoltageCurve[0], g_bmsSettings.socVoltageCurve[1],
                   g_bmsSettings.socVoltageCurve[2], g_bmsSettings.socVoltageCurve[3],
                   g_bmsSettings.useVoltageSoc ? "YES" : "NO");
+    Serial.printf("[BMS] Charge taper: %d/%d/%d mV, %.1f/%.1f A\n",
+                  g_bmsSettings.chargeFullVoltageMv, g_bmsSettings.chargeReducedVoltageMv,
+                  g_bmsSettings.chargeStopVoltageMv, g_bmsSettings.chargeFullCurrentDa / 10.0f,
+                  g_bmsSettings.chargeReducedCurrentDa / 10.0f);
+    Serial.printf("[BMS] Discharge taper: %d/%d/%d mV, %.1f/%.1f A\n",
+                  g_bmsSettings.dischargeFullVoltageMv, g_bmsSettings.dischargeReducedVoltageMv,
+                  g_bmsSettings.dischargeStopVoltageMv, g_bmsSettings.dischargeFullCurrentDa / 10.0f,
+                  g_bmsSettings.dischargeReducedCurrentDa / 10.0f);
 }
 
 void settingsSave() {
@@ -225,6 +243,16 @@ void settingsSave() {
     s_prefs.putInt("socV3", g_bmsSettings.socVoltageCurve[3]);
     s_prefs.putBool("useVSoc", g_bmsSettings.useVoltageSoc);
     storePersistedSocCurve();
+    s_prefs.putInt("chgFullV", g_bmsSettings.chargeFullVoltageMv);
+    s_prefs.putInt("chgRedV", g_bmsSettings.chargeReducedVoltageMv);
+    s_prefs.putInt("chgStopV", g_bmsSettings.chargeStopVoltageMv);
+    s_prefs.putInt("chgFullI", g_bmsSettings.chargeFullCurrentDa);
+    s_prefs.putInt("chgRedI", g_bmsSettings.chargeReducedCurrentDa);
+    s_prefs.putInt("disFullV", g_bmsSettings.dischargeFullVoltageMv);
+    s_prefs.putInt("disRedV", g_bmsSettings.dischargeReducedVoltageMv);
+    s_prefs.putInt("disStopV", g_bmsSettings.dischargeStopVoltageMv);
+    s_prefs.putInt("disFullI", g_bmsSettings.dischargeFullCurrentDa);
+    s_prefs.putInt("disRedI", g_bmsSettings.dischargeReducedCurrentDa);
 
     s_prefs.end();
     Serial.println("[BMS] Settings saved to NVS");

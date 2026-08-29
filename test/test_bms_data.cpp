@@ -6,6 +6,7 @@
 #include <unity.h>
 #include "../src/bms_data.h"
 #include "../src/soc_curve_validation.h"
+#include "../src/current_taper.h"
 #include <Preferences.h>
 
 extern BmsState g_bmsState;
@@ -247,6 +248,88 @@ void test_settings_defaults() {
     TEST_ASSERT_EQUAL_INT(3490, settings.socCurvePoints[1].voltageMv);
     TEST_ASSERT_EQUAL_INT(10, settings.socCurvePoints[1].socPercent);
     TEST_ASSERT_TRUE(settings.useVoltageSoc);
+    TEST_ASSERT_EQUAL_INT(3900, settings.chargeFullVoltageMv);
+    TEST_ASSERT_EQUAL_INT(4050, settings.chargeReducedVoltageMv);
+    TEST_ASSERT_EQUAL_INT(4100, settings.chargeStopVoltageMv);
+    TEST_ASSERT_EQUAL_INT(3400, settings.dischargeFullVoltageMv);
+    TEST_ASSERT_EQUAL_INT(3250, settings.dischargeReducedVoltageMv);
+    TEST_ASSERT_EQUAL_INT(3200, settings.dischargeStopVoltageMv);
+}
+
+void test_settings_current_taper_save_reload() {
+    g_bmsSettings.chargeFullVoltageMv = 3880;
+    g_bmsSettings.chargeReducedCurrentDa = 15;
+    g_bmsSettings.dischargeFullVoltageMv = 3420;
+    g_bmsSettings.dischargeReducedCurrentDa = 20;
+    settingsSave();
+
+    g_bmsSettings = BmsSettings();
+    settingsLoad();
+    TEST_ASSERT_EQUAL_INT(3880, g_bmsSettings.chargeFullVoltageMv);
+    TEST_ASSERT_EQUAL_INT(15, g_bmsSettings.chargeReducedCurrentDa);
+    TEST_ASSERT_EQUAL_INT(3420, g_bmsSettings.dischargeFullVoltageMv);
+    TEST_ASSERT_EQUAL_INT(20, g_bmsSettings.dischargeReducedCurrentDa);
+}
+
+void test_current_taper_uses_highest_for_charge_and_lowest_for_discharge() {
+    CurrentLimits limits = currentTaperCalculate(3900, 3400, g_bmsSettings);
+    TEST_ASSERT_EQUAL_INT(200, limits.chargeDa);
+    TEST_ASSERT_EQUAL_INT(200, limits.dischargeDa);
+
+    limits = currentTaperCalculate(3975, 3325, g_bmsSettings);
+    TEST_ASSERT_EQUAL_INT(105, limits.chargeDa);
+    TEST_ASSERT_EQUAL_INT(105, limits.dischargeDa);
+
+    limits = currentTaperCalculate(4050, 3250, g_bmsSettings);
+    TEST_ASSERT_EQUAL_INT(10, limits.chargeDa);
+    TEST_ASSERT_EQUAL_INT(10, limits.dischargeDa);
+
+    limits = currentTaperCalculate(4100, 3200, g_bmsSettings);
+    TEST_ASSERT_EQUAL_INT(0, limits.chargeDa);
+    TEST_ASSERT_EQUAL_INT(0, limits.dischargeDa);
+}
+
+void test_current_taper_config_parser_is_atomic() {
+    BmsSettings parsed;
+    TEST_ASSERT_TRUE(parseCurrentTaperConfig(
+        "3.880,4.040,4.090,18.5,0.8,3.420,3.260,3.210,19.5,0.9", parsed));
+    TEST_ASSERT_EQUAL_INT(3880, parsed.chargeFullVoltageMv);
+    TEST_ASSERT_EQUAL_INT(185, parsed.chargeFullCurrentDa);
+    TEST_ASSERT_EQUAL_INT(3210, parsed.dischargeStopVoltageMv);
+    TEST_ASSERT_EQUAL_INT(9, parsed.dischargeReducedCurrentDa);
+
+    const BmsSettings before = parsed;
+    TEST_ASSERT_FALSE(parseCurrentTaperConfig(
+        "4.100,4.050,4.090,20,1,3.400,3.250,3.200,20,1", parsed));
+    TEST_ASSERT_EQUAL_INT(before.chargeFullVoltageMv, parsed.chargeFullVoltageMv);
+    TEST_ASSERT_FALSE(parseCurrentTaperConfig(
+        "3.9,4.05,4.1,20,1,3.4,3.25,2.8,20,1", parsed));
+    TEST_ASSERT_EQUAL_INT(before.dischargeStopVoltageMv, parsed.dischargeStopVoltageMv);
+}
+
+void test_current_taper_fails_closed_until_selected_cells_are_complete_and_fresh() {
+    g_bmsSettings.expectedCmusA = 0x001;
+    g_bmsSettings.expectedCmusB = 0;
+    CmuData& cmu = g_bmsState.modules[0];
+    cmu.present = true;
+    cmu.lastSeenTime = 100;
+    g_mockMillis = 100;
+    for (int cell = 0; cell < CELLS_PER_MODULE - 1; ++cell) cmu.voltages[cell] = 3700;
+    g_bmsState.updatePackStatistics();
+    CurrentLimits limits = currentTaperCalculate();
+    TEST_ASSERT_EQUAL_INT(0, limits.chargeDa);
+    TEST_ASSERT_EQUAL_INT(0, limits.dischargeDa);
+
+    cmu.voltages[CELLS_PER_MODULE - 1] = 3700;
+    g_bmsState.updatePackStatistics();
+    limits = currentTaperCalculate();
+    TEST_ASSERT_EQUAL_INT(200, limits.chargeDa);
+    TEST_ASSERT_EQUAL_INT(200, limits.dischargeDa);
+
+    g_mockMillis += CAN_DATA_TIMEOUT_MS;
+    limits = currentTaperCalculate();
+    TEST_ASSERT_EQUAL_INT(0, limits.chargeDa);
+    TEST_ASSERT_EQUAL_INT(0, limits.dischargeDa);
 }
 
 void test_settings_soc_curve_save_reload() {

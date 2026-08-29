@@ -6,9 +6,7 @@
  *   GET  /api/bms       - Full BMS state (all modules)
  *   GET  /api/module/N  - Single module data (N = 1-20)
  *   GET  /api/summary   - Pack summary and safety state
- *   GET  /api/help      - Serial command to web API mapping
  *   POST /api/balancing - Toggle balancing on/off
- *   POST /api/balancing/restart - Send a 2-second balance-disable pulse
  *   POST /api/command   - Execute any serial command via the web UI/API
  *   POST /api/reboot    - Acknowledge, then reboot the device
  *   GET  /              - HTML dashboard
@@ -21,6 +19,7 @@
 #include "bms_data.h"
 #include "protection.h"
 #include "can_handler.h"
+#include "current_taper.h"
 #include <ESPAsyncWebServer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -135,14 +134,20 @@ static String buildSummaryJson() {
     int presentCount = 0;
     int balancingCount = 0;
     int expectedCount = 0;
+    long lowestModuleVoltageMv = 0;
+    long highestModuleVoltageMv = 0;
+    String lowestModuleLabel;
+    String highestModuleLabel;
 
     for (int m = 0; m < BMS_MODULE_COUNT; m++) {
         if (g_bmsState.modules[m].present) {
             presentCount++;
-            // Count cells currently balancing
-            for (int c = 0; c < CELLS_PER_MODULE; c++) {
-                if ((g_bmsState.modules[m].balanceStatus >> c) & 1) {
-                    balancingCount++;
+            // Unselected CMUs remain diagnostic-only and must not affect pack totals.
+            if (isModuleSelectedForPack(m)) {
+                for (int c = 0; c < CELLS_PER_MODULE; c++) {
+                    if ((g_bmsState.modules[m].balanceStatus >> c) & 1) {
+                        balancingCount++;
+                    }
                 }
             }
         }
@@ -154,6 +159,22 @@ static String buildSummaryJson() {
         if (g_bmsSettings.expectedCmusB & (1 << i)) expectedCount++;
     }
 
+    for (int module = 0; module < BMS_MODULE_COUNT; ++module) {
+        if (!isModuleSelectedForPack(module) || !g_bmsState.modules[module].present) continue;
+        const long moduleVoltageMv = g_bmsState.modules[module].getModuleVoltageMv();
+        if (moduleVoltageMv <= 0) continue;
+        const String label = String("Bus ") + (module < 10 ? "A" : "B") +
+                             " CMU " + String((module % 10) + 1);
+        if (lowestModuleVoltageMv == 0 || moduleVoltageMv < lowestModuleVoltageMv) {
+            lowestModuleVoltageMv = moduleVoltageMv;
+            lowestModuleLabel = label;
+        }
+        if (moduleVoltageMv > highestModuleVoltageMv) {
+            highestModuleVoltageMv = moduleVoltageMv;
+            highestModuleLabel = label;
+        }
+    }
+
     // Calculate seconds since last CAN message
     unsigned long msSinceCan = (g_bmsState.lastCanMessageTime > 0)
         ? (millis() - g_bmsState.lastCanMessageTime)
@@ -161,6 +182,7 @@ static String buildSummaryJson() {
 
     const bool batterySafeToUse = digitalRead(PIN_BATTERY_SAFE_TO_USE) == HIGH;
     const CanStats canStats = canGetStats();
+    const CurrentLimits currentLimits = currentTaperCalculate();
     char socCurveText[160] = {};
     formatSocCurvePoints(g_bmsSettings.socCurvePoints,
                          g_bmsSettings.socCurvePointCount,
@@ -181,6 +203,8 @@ static String buildSummaryJson() {
     json += "\"socUnfiltered\":" + String(socUnfilteredPercent()) + ",";
     json += "\"socFilteredCellMv\":" + String(socFilteredCellMv()) + ",";
     json += "\"socCurvePoints\":\"" + String(socCurveText) + "\",";
+    json += "\"chargeCurrentLimitA\":" + String(currentLimits.chargeDa / 10.0f, 1) + ",";
+    json += "\"dischargeCurrentLimitA\":" + String(currentLimits.dischargeDa / 10.0f, 1) + ",";
     json += "\"balancingEnabled\":" + String(g_bmsState.balancingEnabled ? "true" : "false") + ",";
     json += "\"balanceTargetMv\":" + String(g_bmsState.balancingEnabled ? g_bmsState.balanceTargetMv : 0) + ",";
     json += "\"cellsBalancing\":" + String(balancingCount) + ",";
@@ -195,11 +219,6 @@ static String buildSummaryJson() {
     json += "\"lastBalanceTargetMv\":" + String(canStats.lastBalanceTargetMv) + ",";
     json += "\"lastBalanceBusMask\":" + String(canStats.lastBalanceBusMask) + ",";
     json += "\"msSinceBalanceCommand\":" + String(canStats.lastBalanceCommandTime > 0 ? millis() - canStats.lastBalanceCommandTime : 0) + ",";
-    json += "\"balanceRecovery\":{";
-    json += "\"active\":" + String(canStats.balanceRecoveryActive ? "true" : "false") + ",";
-    json += "\"remainingMs\":" + String(canStats.balanceRecoveryRemainingMs) + ",";
-    json += "\"count\":" + String(canStats.balanceRecoveryCount);
-    json += "},";
     json += "\"twai\":{";
     json += "\"enabled\":" + String(canIsBusBEnabled() ? "true" : "false") + ",";
     json += "\"statusValid\":" + String(canStats.twaiStatusValid ? "true" : "false") + ",";
@@ -213,6 +232,13 @@ static String buildSummaryJson() {
     json += "},";
     json += "\"hasData\":" + String(presentCount > 0 ? "true" : "false") + ",";
     json += "\"expectedTotal\":" + String(expectedCount) + ",";
+    json += "\"lowestModuleVoltageMv\":" + String(lowestModuleVoltageMv) + ",";
+    json += "\"highestModuleVoltageMv\":" + String(highestModuleVoltageMv) + ",";
+    json += "\"moduleVoltageDeltaMv\":" +
+            String(highestModuleVoltageMv > 0 && lowestModuleVoltageMv > 0
+                       ? highestModuleVoltageMv - lowestModuleVoltageMv : 0) + ",";
+    json += "\"lowestModuleLabel\":\"" + lowestModuleLabel + "\",";
+    json += "\"highestModuleLabel\":\"" + highestModuleLabel + "\",";
     const int seriesCellCount = expectedCount * CELLS_PER_MODULE;
     json += "\"maxDesignVoltage\":" +
             String((g_bmsSettings.socVoltageCurve[2] * seriesCellCount) / 1000.0f, 1) + ",";
@@ -220,6 +246,17 @@ static String buildSummaryJson() {
             String((g_bmsSettings.socVoltageCurve[0] * seriesCellCount) / 1000.0f, 1) + ",";
     json += "\"expectedCmusA\":" + String(g_bmsSettings.expectedCmusA) + ",";
     json += "\"expectedCmusB\":" + String(g_bmsSettings.expectedCmusB) + ",";
+    json += "\"currentTaper\":{";
+    json += "\"chargeFullVoltageV\":" + String(g_bmsSettings.chargeFullVoltageMv / 1000.0f, 3) + ",";
+    json += "\"chargeReducedVoltageV\":" + String(g_bmsSettings.chargeReducedVoltageMv / 1000.0f, 3) + ",";
+    json += "\"chargeStopVoltageV\":" + String(g_bmsSettings.chargeStopVoltageMv / 1000.0f, 3) + ",";
+    json += "\"chargeFullCurrentA\":" + String(g_bmsSettings.chargeFullCurrentDa / 10.0f, 1) + ",";
+    json += "\"chargeReducedCurrentA\":" + String(g_bmsSettings.chargeReducedCurrentDa / 10.0f, 1) + ",";
+    json += "\"dischargeFullVoltageV\":" + String(g_bmsSettings.dischargeFullVoltageMv / 1000.0f, 3) + ",";
+    json += "\"dischargeReducedVoltageV\":" + String(g_bmsSettings.dischargeReducedVoltageMv / 1000.0f, 3) + ",";
+    json += "\"dischargeStopVoltageV\":" + String(g_bmsSettings.dischargeStopVoltageMv / 1000.0f, 3) + ",";
+    json += "\"dischargeFullCurrentA\":" + String(g_bmsSettings.dischargeFullCurrentDa / 10.0f, 1) + ",";
+    json += "\"dischargeReducedCurrentA\":" + String(g_bmsSettings.dischargeReducedCurrentDa / 10.0f, 1) + "},";
     json += "\"io\":{\"batterySafeToUse\":" + String(batterySafeToUse ? "true" : "false") + "}";
     json += "}";
 
@@ -323,255 +360,175 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Outlander BMS Monitor</title>
     <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #1a1a2e;
-            color: #eee;
-            padding: 20px;
-        }
-        h1 { text-align: center; margin-bottom: 20px; color: #4ade80; }
-        .summary {
-            background: #16213e;
-            padding: 15px 20px;
-            border-radius: 8px;
-            margin-bottom: 20px;
-            display: flex;
-            justify-content: space-around;
-            flex-wrap: wrap;
-            gap: 15px;
-        }
-        .io-summary {
-            background: #121b34;
-            padding: 12px 20px;
-            border-radius: 8px;
-            margin-bottom: 20px;
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-            gap: 18px;
-        }
-        .io-block { background: #0f172a; border-radius: 8px; padding: 12px; }
-        .io-title { font-weight: bold; color: #93c5fd; margin-bottom: 8px; }
-        .io-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
-        .io-item { background: #0b1220; border-radius: 6px; padding: 8px; text-align: center; }
-        .io-label { display: block; font-size: 0.75em; color: #94a3b8; margin-bottom: 4px; }
-        .io-value { font-weight: bold; color: #6b7280; }
-        .safety-summary {
-            background: #121b34;
-            padding: 12px 20px;
-            border-radius: 8px;
-            margin-bottom: 20px;
-            display: flex;
-            justify-content: center;
-            flex-wrap: wrap;
-            gap: 18px;
-        }
-        .protection-row {
-            background: #121b34;
-            border-radius: 8px;
-            margin-bottom: 20px;
-            padding: 12px 20px;
-            text-align: center;
-        }
-        .protection-row .summary-label { display: inline; margin-right: 8px; }
-        .summary-item { text-align: center; }
-        .summary-value { font-size: 1.8em; font-weight: bold; color: #4ade80; }
-        .summary-label { font-size: 0.9em; color: #888; }
-        .modules { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 15px; }
-        .bus-section { grid-column: 1 / -1; }
-        .bus-summary {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            cursor: pointer;
-            margin-top: 20px;
-            color: #3b82f6;
-            border-bottom: 2px solid #3b82f6;
-            padding: 8px 4px;
-            font-size: 1.5em;
-            font-weight: bold;
-        }
-        .bus-summary-meta { color: #94a3b8; font-size: 0.55em; font-weight: normal; }
-        .bus-modules {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 15px;
-            padding-top: 15px;
-        }
-        .module {
-            background: #16213e;
-            border-radius: 8px;
-            padding: 15px;
-        }
-        .module.offline { opacity: 0.5; }
-        .module-header {
-            display: block;
-            margin-bottom: 10px;
-            border-bottom: 1px solid #333;
-            padding-bottom: 8px;
-        }
-        .module-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-        .expected-chk { cursor: pointer; }
-        .module-title { font-weight: bold; }
-        .temps { display: block; margin-top: 6px; font-size: 0.85em; color: #f59e0b; }
-        .cells { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
-        .cell {
-            background: #0f3460;
-            padding: 8px 4px;
-            border-radius: 4px;
-            text-align: center;
-            font-size: 0.85em;
-            position: relative;
-        }
-        .cell.balancing { background: #4ade80; color: #000; }
-        .cell.low { background: #ef4444; }
-        .cell.high { background: #3b82f6; }
-        .cell-num { font-size: 0.7em; color: #666; display: block; }
-        .cell-delta { font-size: 0.7em; color: #888; display: block; }
-        .cell.balancing .cell-delta { color: #333; }
-        .module-delta { font-size: 0.8em; color: #f59e0b; margin-left: 10px; }
-        .module-voltage { font-size: 0.9em; color: #4ade80; margin-left: 10px; }
-        .controls {
-            display: flex;
-            justify-content: center;
-            flex-wrap: wrap;
-            gap: 12px;
-            margin-top: 20px;
-        }
-        .mask-control { display: inline-flex; align-items: center; gap: 6px; color: #cbd5e1; font-size: 0.85em; }
-        .mask-control input { width: 4.5em; padding: 8px 6px; border: 1px solid #475569; border-radius: 4px; background: #0f172a; color: #f8fafc; text-transform: uppercase; }
-        .mask-control button { padding: 8px 12px; font-size: 0.85em; }
-        button {
-            background: #4ade80;
-            color: #000;
-            border: none;
-            padding: 12px 30px;
-            border-radius: 6px;
-            font-size: 1em;
-            cursor: pointer;
-            font-weight: bold;
-        }
-        button:hover { background: #22c55e; }
-        button.off { background: #6b7280; color: #fff; }
-        button.danger { background: #dc2626; color: #fff; }
-        button.danger:hover { background: #b91c1c; }
-        button.recovery { background: #f59e0b; color: #111827; }
-        button.recovery:hover { background: #d97706; }
-        button:disabled { cursor: wait; opacity: 0.65; }
-        .status { text-align: center; margin-top: 10px; color: #666; font-size: 0.85em; }
-        .uptime { margin-top: 2px; }
-        .error { color: #ef4444; }
-        .command-output {
-            width: 100%;
-            box-sizing: border-box;
-            min-height: 120px;
-            max-height: 360px;
-            overflow: auto;
-            background: #0b1220;
-            color: #cbd5e1;
-            border-radius: 8px;
-            padding: 12px;
-            white-space: pre-wrap;
-            text-align: left;
-            font-size: 0.78em;
-        }
+        :root { --bg:#0d1220; --panel:#151d31; --panel2:#10182a; --line:#28344d; --text:#e7edf7; --muted:#8e9bb0; --good:#4ade80; --warn:#f59e0b; --bad:#ef4444; --blue:#60a5fa; }
+        * { box-sizing:border-box; margin:0; padding:0; }
+        body { max-width:1500px; margin:auto; padding:12px; background:var(--bg); color:var(--text); font:13px/1.35 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; }
+        h1 { margin:2px 0 10px; color:var(--good); text-align:center; font-size:1.35rem; letter-spacing:.02em; }
+        .section { margin-bottom:10px; padding:10px; background:var(--panel); border:1px solid var(--line); border-radius:9px; }
+        .section-title { margin-bottom:7px; color:#b7c5da; font-size:.72rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase; }
+        .metric-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(145px,1fr)); gap:7px; }
+        .metric { min-width:0; padding:8px 9px; background:var(--panel2); border-radius:7px; text-align:center; }
+        .metric-value { color:var(--good); font-size:1.35rem; font-weight:750; line-height:1.1; }
+        .metric-label { margin-top:3px; color:var(--muted); font-size:.72rem; }
+        .metric-note { margin-top:3px; color:#738198; font-size:.65rem; }
+        .safety { border-color:#29563c; }
+        .safety .metric-value { font-size:1.15rem; }
+        .spread-row { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+        .spread-row .section { min-width:0; }
+        .spread { display:grid; grid-template-columns:repeat(3,1fr); gap:1px; overflow:hidden; padding:0; background:var(--line); }
+        .spread > div { padding:8px 5px; background:var(--panel2); text-align:center; }
+        .spread .metric-value { font-size:1.15rem; }
+        .spread.two { grid-template-columns:repeat(2,1fr); }
+        .modules { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:9px; }
+        .bus-section { grid-column:1/-1; }
+        .bus-summary { display:flex; justify-content:space-between; align-items:center; padding:7px 2px; border-bottom:1px solid var(--blue); color:var(--blue); cursor:pointer; font-size:1rem; font-weight:700; }
+        .bus-summary-meta { color:var(--muted); font-size:.68rem; font-weight:400; }
+        .bus-modules { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:9px; padding-top:9px; }
+        .module { padding:9px; background:var(--panel); border:1px solid var(--line); border-radius:8px; }
+        .module.offline { opacity:.42; }
+        .module-header { margin-bottom:7px; padding-bottom:6px; border-bottom:1px solid var(--line); }
+        .module-controls { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+        .expected-chk { cursor:pointer; }
+        .module-title { font-weight:700; }
+        .module-voltage { margin-left:8px; color:var(--good); font-size:.78rem; }
+        .module-delta { margin-left:7px; color:var(--warn); font-size:.72rem; }
+        .temps { display:block; margin-top:4px; color:#d8a84e; font-size:.7rem; }
+        .cells { display:grid; grid-template-columns:repeat(4,1fr); gap:4px; }
+        .cell { position:relative; padding:6px 3px; background:#142946; border:1px solid transparent; border-radius:5px; text-align:center; font-size:.78rem; }
+        .cell.module-low { background:#253047; border-color:#8b6b2e; }
+        .cell.pack-low { background:#5a2028; border-color:#fb7185; box-shadow:0 0 0 1px rgba(251,113,133,.18); }
+        .cell.balancing { background:#39794e; border-color:var(--good); color:#fff; }
+        .cell-num,.cell-delta { display:block; color:#75839a; font-size:.62rem; }
+        .cell.pack-low .cell-num,.cell.pack-low .cell-delta,.cell.balancing .cell-num,.cell.balancing .cell-delta { color:#d8e0eb; }
+        .controls { display:flex; justify-content:center; align-items:center; flex-wrap:wrap; gap:7px; }
+        button { padding:7px 13px; border:0; border-radius:5px; background:var(--good); color:#07130b; font-size:.75rem; font-weight:700; cursor:pointer; }
+        button:hover { filter:brightness(.9); }
+        button.off { background:#586477; color:#fff; }
+        button.recovery { background:var(--warn); color:#1f1603; }
+        button.danger { background:#b73542; color:#fff; }
+        button:disabled { opacity:.6; cursor:wait; }
+        .taper-groups { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+        .taper-group { padding:9px; background:var(--panel2); border-radius:7px; }
+        .taper-group-title { margin-bottom:7px; color:var(--blue); font-size:.76rem; font-weight:700; }
+        .taper-grid { display:grid; grid-template-columns:repeat(5,minmax(70px,1fr)); gap:6px; }
+        .taper-field { min-width:0; color:var(--muted); font-size:.65rem; }
+        .taper-field input { display:block; width:100%; margin-top:3px; padding:6px; border:1px solid #46536a; border-radius:4px; background:#0b1323; color:#fff; font:inherit; font-size:.74rem; }
+        .taper-actions { margin-top:8px; text-align:right; }
+        .taper-note { margin-right:8px; color:#69778d; font-size:.65rem; }
+        .diagnostics { margin-top:12px; padding-top:9px; border-top:1px solid var(--line); }
+        .diagnostics .controls { justify-content:flex-start; }
+        .command-output { display:none; width:100%; min-height:80px; max-height:280px; margin-top:7px; overflow:auto; padding:8px; border-radius:6px; background:#080e1a; color:#bac6d8; white-space:pre-wrap; text-align:left; font-size:.68rem; }
+        .status { margin-top:5px; color:#69778d; text-align:center; font-size:.66rem; }
+        .error { color:var(--bad); }
+        @media(max-width:760px) { .spread-row,.taper-groups{grid-template-columns:1fr} }
+        @media(max-width:620px) { .taper-grid{grid-template-columns:repeat(2,1fr)} }
+        @media(max-width:520px) { body{padding:7px}.metric-grid{grid-template-columns:repeat(2,1fr)}.spread .metric-value{font-size:1rem}.modules,.bus-modules{grid-template-columns:1fr} }
     </style>
 </head>
 <body>
     <h1>Outlander BMS Monitor</h1>
 
-    <div class="safety-summary">
-        <div class="summary-item">
-            <div class="summary-value" id="batterySafeToUse">--</div>
-            <div class="summary-label">Battery Safe To Use (GPIO15)</div>
+    <section class="section safety">
+        <div class="section-title">Safety</div>
+        <div class="metric-grid">
+            <div class="metric"><div class="metric-value" id="batterySafeToUse">--</div><div class="metric-label">BATTERY_SAFE_TO_USE · GPIO15</div></div>
+            <div class="metric"><div class="metric-value" id="protection">--</div><div class="metric-label">Protection</div></div>
+            <div class="metric"><div class="metric-value" id="canStatus">--</div><div class="metric-label">CMU CAN</div></div>
+            <div class="metric"><div class="metric-value" id="avgTemp">--</div><div class="metric-label">Average Temperature (°C)</div></div>
+            <div class="metric"><div class="metric-value" id="maximumTemp">--</div><div class="metric-label">Maximum Temperature (°C)</div></div>
         </div>
-    </div>
+    </section>
 
-    <div class="summary">
-        <div class="summary-item">
-            <div class="summary-value" id="canStatus">--</div>
-            <div class="summary-label">CAN Bus</div>
+    <section class="section">
+        <div class="section-title">Pack</div>
+        <div class="metric-grid">
+            <div class="metric"><div class="metric-value" id="soc">--</div><div class="metric-label">State of Charge</div></div>
+            <div class="metric"><div class="metric-value" id="packVoltage">--</div><div class="metric-label">Pack Voltage (V)</div></div>
+            <div class="metric"><div class="metric-value" id="modulesOnline">--</div><div class="metric-label">Modules Online</div><div class="metric-note" id="designVoltage">Design --</div></div>
+            <div class="metric"><div class="metric-value" id="chargeLimit">--</div><div class="metric-label">Charge Limit (A)</div></div>
+            <div class="metric"><div class="metric-value" id="dischargeLimit">--</div><div class="metric-label">Discharge Limit (A)</div></div>
         </div>
-        <div class="summary-item">
-            <div class="summary-value" id="soc">--</div>
-            <div class="summary-label">SOC (%)</div>
-        </div>
-        <div class="summary-item">
-            <div class="summary-value" id="packVoltage">--</div>
-            <div class="summary-label">Pack Voltage (V)</div>
-        </div>
-        <div class="summary-item">
-            <div class="summary-value" id="lowestCell">--</div>
-            <div class="summary-label">Lowest Cell (mV)</div>
-        </div>
-        <div class="summary-item">
-            <div class="summary-value" id="highestCell">--</div>
-            <div class="summary-label">Highest Cell (mV)</div>
-        </div>
-        <div class="summary-item">
-            <div class="summary-value" id="voltageDelta">--</div>
-            <div class="summary-label">All-Cell Delta (mV)</div>
-        </div>
-        <div class="summary-item">
-            <div class="summary-value" id="avgTemp">--</div>
-            <div class="summary-label">Avg Temp (°C)</div>
-        </div>
-        <div class="summary-item">
-            <div class="summary-value" id="maximumTemp">--</div>
-            <div class="summary-label">Maximum Temp (°C)</div>
-        </div>
-        <div class="summary-item">
-            <div class="summary-value" id="modulesOnline">--</div>
-            <div class="summary-label">Modules Online</div>
-        </div>
-        <div class="summary-item">
-            <div class="summary-value" id="cellsBalancing">--</div>
-            <div class="summary-label">Cells Balancing</div>
-        </div>
-        <div class="summary-item">
-            <div class="summary-value" id="balanceTarget">--</div>
-            <div class="summary-label">8th-Lowest Balance Target (mV)</div>
-        </div>
-    </div>
+    </section>
 
-    <div class="protection-row">
-        <span class="summary-label">Protection</span>
-        <span class="summary-value" id="protection">--</span>
-    </div>
-
-    <div class="modules" id="modulesContainer"></div>
-
-    <div class="controls">
-        <button id="balanceBtn" onclick="toggleBalancing()">Balancing: OFF</button>
-        <button id="balanceRecoveryBtn" class="recovery" onclick="restartBalancing()">Restart Balancing</button>
-        <button id="debugBtn" class="off" onclick="sendCommand('d')">Debug: OFF</button>
-        <button class="recovery" onclick="sendCommand('o', 'Enable the 10-minute supervised voltage recovery override? Confirm fresh CMU data and prepare the charge/discharge procedure first.')">Enable Voltage Override</button>
-        <button class="off" onclick="sendCommand('O')">Cancel Voltage Override</button>
-        <button onclick="sendCommand('r')">Full Report</button>
-        <button onclick="sendCommand('s')">Detailed Stats</button>
-        <button onclick="sendCommand('c')">CAN Diagnostics</button>
-        <button onclick="sendCommand('h')">Command Help</button>
-        <label class="mask-control">Expected A mask (hex)
-            <input id="expectedMaskA" maxlength="3" inputmode="text" aria-label="Expected Bus A CMU mask">
-            <button onclick="setExpectedMask('A')">Set A</button>
-        </label>
-        <label class="mask-control">Expected B mask (hex)
-            <input id="expectedMaskB" maxlength="3" inputmode="text" aria-label="Expected Bus B CMU mask">
-            <button onclick="setExpectedMask('B')">Set B</button>
-        </label>
-        <button id="rebootBtn" class="danger" onclick="rebootDevice()">Reboot Device</button>
-    </div>
-
-    <pre id="commandOutput" class="command-output">Web command output appears here.</pre>
-
-    <div class="io-summary">
-        <div class="io-block">
-            <div class="io-title">Output</div>
-            <div class="io-grid">
-                <div class="io-item"><span class="io-label">BATTERY_SAFE_TO_USE</span><span class="io-value" id="ioBatterySafeToUse">--</span></div>
+    <div class="spread-row">
+        <section class="section">
+            <div class="section-title">Cell Voltage Spread · mV</div>
+            <div class="spread">
+                <div><div class="metric-value" id="lowestCell">--</div><div class="metric-label">Lowest Cell</div></div>
+                <div><div class="metric-value" id="highestCell">--</div><div class="metric-label">Highest Cell</div></div>
+                <div><div class="metric-value" id="voltageDelta">--</div><div class="metric-label">All-Cell Delta</div></div>
             </div>
-        </div>
+        </section>
+
+        <section class="section">
+            <div class="section-title">Module Voltage Spread · mV</div>
+            <div class="spread">
+                <div><div class="metric-value" id="lowestModule">--</div><div class="metric-label">Lowest Module</div><div class="metric-note" id="lowestModuleLabel">--</div></div>
+                <div><div class="metric-value" id="highestModule">--</div><div class="metric-label">Highest Module</div><div class="metric-note" id="highestModuleLabel">--</div></div>
+                <div><div class="metric-value" id="moduleDelta">--</div><div class="metric-label">Module Delta</div></div>
+            </div>
+        </section>
     </div>
+
+    <section class="section">
+        <div class="section-title">Balancing</div>
+        <div class="metric-grid">
+            <div class="metric"><div class="metric-value" id="cellsBalancing">--</div><div class="metric-label">Cells Balancing</div></div>
+            <div class="metric"><div class="metric-value" id="balanceTarget">--</div><div class="metric-label">8th-Lowest Target (mV)</div></div>
+            <div class="metric"><button id="balanceBtn" onclick="toggleBalancing()">Balancing: OFF</button></div>
+        </div>
+    </section>
+
+    <section class="section">
+        <div class="section-title">Modules</div>
+        <div class="modules" id="modulesContainer"></div>
+    </section>
+
+    <section class="section">
+        <div class="section-title">Configuration & Actions</div>
+        <div class="controls">
+            <button id="debugBtn" class="off" onclick="sendCommand('d')">Debug: OFF</button>
+            <button id="voltageOverrideBtn" class="recovery" onclick="toggleVoltageOverride()">Enable Voltage Override</button>
+            <button id="rebootBtn" class="danger" onclick="rebootDevice()">Reboot</button>
+        </div>
+        <div class="diagnostics">
+            <div class="controls">
+                <button class="off" onclick="runDiagnostic('r')">Full Report</button>
+                <button class="off" onclick="runDiagnostic('s')">Detailed Stats</button>
+                <button class="off" onclick="runDiagnostic('c')">CAN Diagnostics</button>
+            </div>
+            <pre id="commandOutput" class="command-output"></pre>
+        </div>
+    </section>
+
+    <section class="section">
+        <div class="section-title">Current Taper Parameters</div>
+        <form id="taperForm" onsubmit="saveTaper(event)">
+            <div class="taper-groups">
+                <div class="taper-group">
+                    <div class="taper-group-title">Charge · governed by highest selected cell</div>
+                    <div class="taper-grid">
+                        <label class="taper-field">Full voltage (V)<input id="chargeFullVoltage" type="number" min="2.5" max="4.199" step="0.001" required></label>
+                        <label class="taper-field">Reduced voltage (V)<input id="chargeReducedVoltage" type="number" min="2.5" max="4.199" step="0.001" required></label>
+                        <label class="taper-field">Stop voltage (V)<input id="chargeStopVoltage" type="number" min="2.5" max="4.199" step="0.001" required></label>
+                        <label class="taper-field">Full current (A)<input id="chargeFullCurrent" type="number" min="0.1" max="100" step="0.1" required></label>
+                        <label class="taper-field">Reduced current (A)<input id="chargeReducedCurrent" type="number" min="0.1" max="100" step="0.1" required></label>
+                    </div>
+                </div>
+                <div class="taper-group">
+                    <div class="taper-group-title">Discharge · governed by lowest selected cell</div>
+                    <div class="taper-grid">
+                        <label class="taper-field">Full voltage (V)<input id="dischargeFullVoltage" type="number" min="2.5" max="4.5" step="0.001" required></label>
+                        <label class="taper-field">Reduced voltage (V)<input id="dischargeReducedVoltage" type="number" min="2.5" max="4.5" step="0.001" required></label>
+                        <label class="taper-field">Stop voltage (V)<input id="dischargeStopVoltage" type="number" min="2.801" max="4.5" step="0.001" required></label>
+                        <label class="taper-field">Full current (A)<input id="dischargeFullCurrent" type="number" min="0.1" max="100" step="0.1" required></label>
+                        <label class="taper-field">Reduced current (A)<input id="dischargeReducedCurrent" type="number" min="0.1" max="100" step="0.1" required></label>
+                    </div>
+                </div>
+            </div>
+            <div class="taper-actions"><span class="taper-note">Saved atomically and retained across reboot.</span><button type="submit">Save Taper</button></div>
+        </form>
+    </section>
 
     <div class="status" id="status">Connecting...</div>
     <div class="status uptime" id="uptime">Uptime: --</div>
@@ -584,30 +541,11 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
         let expectedMaskA = 0;
         let expectedMaskB = 0;
         let rebooting = false;
-        let restartingBalancing = false;
+        let supervisedOverrideActive = false;
         const busOpenState = { A: null, B: null };
 
         function setBusOpen(bus, isOpen) {
             busOpenState[bus] = isOpen;
-        }
-
-        function setIoState(id, isHigh) {
-            const el = document.getElementById(id);
-            if (!el) return;
-            el.textContent = isHigh ? 'HIGH' : 'LOW';
-            el.style.color = isHigh ? '#4ade80' : '#6b7280';
-        }
-
-        function setIoValue(id, value) {
-            const el = document.getElementById(id);
-            if (!el) return;
-            if (value === null || value === undefined) {
-                el.textContent = '--';
-                el.style.color = '#6b7280';
-                return;
-            }
-            el.textContent = value.toFixed(2);
-            el.style.color = '#e2e8f0';
         }
 
         function updateDashboard(data, summary) {
@@ -615,10 +553,6 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             balancingEnabled = data.balancingEnabled;
             expectedMaskA = summary.expectedCmusA;
             expectedMaskB = summary.expectedCmusB;
-            const maskAInput = document.getElementById('expectedMaskA');
-            const maskBInput = document.getElementById('expectedMaskB');
-            if (document.activeElement !== maskAInput) maskAInput.value = expectedMaskA.toString(16).toUpperCase().padStart(3, '0');
-            if (document.activeElement !== maskBInput) maskBInput.value = expectedMaskB.toString(16).toUpperCase().padStart(3, '0');
 
             // Update CAN status
             const canEl = document.getElementById('canStatus');
@@ -642,6 +576,27 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             document.getElementById('soc').textContent = hasData ? (summary.soc + '%') : na;
             document.getElementById('avgTemp').textContent = hasData ? summary.avgTemp : na;
             document.getElementById('maximumTemp').textContent = hasData ? summary.highestTemp : na;
+            document.getElementById('chargeLimit').textContent = hasData ? summary.chargeCurrentLimitA.toFixed(1) : na;
+            document.getElementById('dischargeLimit').textContent = hasData ? summary.dischargeCurrentLimitA.toFixed(1) : na;
+            document.getElementById('designVoltage').textContent =
+                `Design ${summary.minDesignVoltage.toFixed(1)}–${summary.maxDesignVoltage.toFixed(1)} V`;
+            document.getElementById('lowestModule').textContent = summary.lowestModuleVoltageMv || na;
+            document.getElementById('highestModule').textContent = summary.highestModuleVoltageMv || na;
+            document.getElementById('moduleDelta').textContent = summary.moduleVoltageDeltaMv || 0;
+            document.getElementById('lowestModuleLabel').textContent = summary.lowestModuleLabel || '--';
+            document.getElementById('highestModuleLabel').textContent = summary.highestModuleLabel || '--';
+
+            const taper = summary.currentTaper || {};
+            setTaperValue('chargeFullVoltage', taper.chargeFullVoltageV, 3);
+            setTaperValue('chargeReducedVoltage', taper.chargeReducedVoltageV, 3);
+            setTaperValue('chargeStopVoltage', taper.chargeStopVoltageV, 3);
+            setTaperValue('chargeFullCurrent', taper.chargeFullCurrentA, 1);
+            setTaperValue('chargeReducedCurrent', taper.chargeReducedCurrentA, 1);
+            setTaperValue('dischargeFullVoltage', taper.dischargeFullVoltageV, 3);
+            setTaperValue('dischargeReducedVoltage', taper.dischargeReducedVoltageV, 3);
+            setTaperValue('dischargeStopVoltage', taper.dischargeStopVoltageV, 3);
+            setTaperValue('dischargeFullCurrent', taper.dischargeFullCurrentA, 1);
+            setTaperValue('dischargeReducedCurrent', taper.dischargeReducedCurrentA, 1);
 
             const debugBtn = document.getElementById('debugBtn');
             debugBtn.textContent = 'Debug: ' + (summary.debugMode ? 'ON' : 'OFF');
@@ -664,7 +619,10 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             const batterySafeEl = document.getElementById('batterySafeToUse');
             batterySafeEl.textContent = batterySafe ? 'SAFE' : 'UNSAFE';
             batterySafeEl.style.color = batterySafe ? '#4ade80' : '#ef4444';
-            setIoState('ioBatterySafeToUse', batterySafe);
+            supervisedOverrideActive = !!summary.supervisedOverrideActive;
+            const overrideBtn = document.getElementById('voltageOverrideBtn');
+            overrideBtn.textContent = supervisedOverrideActive ? 'Cancel Voltage Override' : 'Enable Voltage Override';
+            overrideBtn.className = supervisedOverrideActive ? 'danger' : 'recovery';
             
             document.getElementById('balanceBtn').textContent = 'Balancing: ' + (balancingEnabled ? 'ON' : 'OFF');
             document.getElementById('balanceBtn').className = balancingEnabled ? '' : 'off';
@@ -679,7 +637,6 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             }
 
             let onlineCount = 0;
-            let balancingCount = 0;
 
             // Group modules by bus
             const busA = data.modules.filter(m => m.bus === 'A');
@@ -705,7 +662,7 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
                         ? (expectedMaskA & (1 << (mod.cmuId - 1)))
                         : (expectedMaskB & (1 << (mod.cmuId - 1)));
 
-                    if (mod.present) onlineCount++;
+                    if (mod.present && isExpected) onlineCount++;
 
                     const validVoltages = mod.voltages.filter(v => v > 0);
                     const modMin = validVoltages.length > 0 ? Math.min(...validVoltages) : 0;
@@ -731,14 +688,13 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
                     for (let i = 0; i < mod.voltages.length; i++) {
                         const v = mod.voltages[i];
                         const isBalancing = mod.balancing[i];
-                        if (isBalancing) balancingCount++;
                         const hasV = v > 0;
                         const cellDelta = hasV ? v - modMin : 0;
 
                         let cellClass = 'cell';
                         if (isBalancing) cellClass += ' balancing';
-                        else if (hasV && v <= lowestCellMv + 5) cellClass += ' low';
-                        else if (hasV && v >= lowestCellMv + 50) cellClass += ' high';
+                        else if (hasV && mod.selectedForPack && v === lowestCellMv) cellClass += ' pack-low';
+                        else if (hasV && v === modMin) cellClass += ' module-low';
 
                         busHtml += `<div class="${cellClass}">`;
                         busHtml += `<span class="cell-num">C${i + 1}</span>`;
@@ -758,7 +714,7 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             document.getElementById('modulesContainer').innerHTML = html;
             const expectedTotal = summary.expectedTotal > 0 ? summary.expectedTotal : 20;
             document.getElementById('modulesOnline').textContent = onlineCount + '/' + expectedTotal;
-            document.getElementById('cellsBalancing').textContent = balancingCount;
+            document.getElementById('cellsBalancing').textContent = summary.cellsBalancing;
             document.getElementById('status').textContent = 'Last update: ' + new Date().toLocaleTimeString();
             document.getElementById('status').className = 'status';
             const uptimeSeconds = Math.floor(summary.uptimeMs / 1000);
@@ -777,17 +733,11 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
                 ' queued, Bus ' + busName + ', target ' +
                 (summary.lastBalanceTargetMv || '--') + ' mV';
             const twai = summary.twai || {};
-            const recovery = summary.balanceRecovery || {};
             let twaiText = 'TWAI B: ' + (twai.state || 'UNAVAILABLE') +
                 ' | TX err ' + (twai.txErrorCounter ?? '--') +
                 ' | TX failed ' + (twai.txFailedCount ?? '--') +
                 ' | bus err ' + (twai.busErrorCount ?? '--') +
                 ' | arb lost ' + (twai.arbLostCount ?? '--');
-            if (recovery.active) {
-                twaiText += ' | balance restart: ' + Math.ceil((recovery.remainingMs || 0) / 1000) + 's';
-            } else if (recovery.count) {
-                twaiText += ' | balance restarts: ' + recovery.count;
-            }
             document.getElementById('twaiDiagnostics').textContent = twaiText;
         }
 
@@ -819,67 +769,69 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             }
         }
 
-        async function sendCommand(command, confirmation) {
+        async function sendCommand(command, confirmation, showOutput = false) {
             if (confirmation && !window.confirm(confirmation)) return;
             const output = document.getElementById('commandOutput');
+            if (showOutput) output.style.display = 'block';
             try {
                 const formData = new FormData();
                 formData.append('command', command);
                 const response = await fetch('/api/command', { method: 'POST', body: formData });
                 const payload = await response.json();
-                output.textContent = JSON.stringify(payload, null, 2);
+                if (showOutput) output.textContent = JSON.stringify(payload, null, 2);
                 if (!response.ok) throw new Error(payload.error || ('HTTP ' + response.status));
                 fetchData();
             } catch (err) {
-                output.textContent = 'Command failed: ' + err.message;
+                if (showOutput) output.textContent = 'Command failed: ' + err.message;
+                else {
+                    document.getElementById('status').textContent = 'Command failed: ' + err.message;
+                    document.getElementById('status').className = 'status error';
+                }
             }
         }
 
-        async function setExpectedMask(bus) {
-            const input = document.getElementById(bus === 'A' ? 'expectedMaskA' : 'expectedMaskB');
-            const mask = input.value.trim();
-            if (!/^[0-9a-fA-F]{1,3}$/.test(mask)) {
-                document.getElementById('commandOutput').textContent = 'Mask must be 1-3 hexadecimal digits.';
+        function runDiagnostic(command) { sendCommand(command, null, true); }
+
+        function setTaperValue(id, value, digits) {
+            const input = document.getElementById(id);
+            if (document.activeElement !== input && Number.isFinite(value)) {
+                input.value = value.toFixed(digits);
+            }
+        }
+
+        function toggleVoltageOverride() {
+            if (supervisedOverrideActive) {
+                sendCommand('O');
                 return;
             }
-            const formData = new FormData();
-            formData.append('command', bus);
-            formData.append('mask', mask);
-            try {
-                const response = await fetch('/api/command', { method: 'POST', body: formData });
-                const payload = await response.json();
-                document.getElementById('commandOutput').textContent = JSON.stringify(payload, null, 2);
-                if (!response.ok) throw new Error(payload.error || ('HTTP ' + response.status));
-                fetchData();
-            } catch (err) {
-                document.getElementById('commandOutput').textContent = 'Command failed: ' + err.message;
-            }
+            sendCommand('o', 'Enable the 10-minute supervised voltage recovery override? Confirm fresh CMU data and prepare the charge/discharge procedure first.');
         }
 
-        async function restartBalancing() {
-            if (!window.confirm('Send a 2-second balance-disable pulse, then re-enable balancing? This does not reboot the BMS or reset CMUs.')) return;
+        async function saveTaper(event) {
+            event.preventDefault();
+            const ids = [
+                'chargeFullVoltage', 'chargeReducedVoltage', 'chargeStopVoltage',
+                'chargeFullCurrent', 'chargeReducedCurrent',
+                'dischargeFullVoltage', 'dischargeReducedVoltage', 'dischargeStopVoltage',
+                'dischargeFullCurrent', 'dischargeReducedCurrent'
+            ];
+            const values = ids.map(id => document.getElementById(id).value.trim());
+            if (values.some(value => value === '')) return;
+            if (!window.confirm('Save these charge and discharge taper parameters?')) return;
 
-            restartingBalancing = true;
-            const button = document.getElementById('balanceRecoveryBtn');
+            const formData = new FormData();
+            formData.append('currentTaper', values.join(','));
             const status = document.getElementById('status');
-            button.disabled = true;
-            button.textContent = 'Restarting...';
-            status.textContent = 'Balance restart requested: disable pulse in progress.';
-            status.className = 'status';
-
             try {
-                const response = await fetch('/api/balancing/restart', { method: 'POST' });
-                if (!response.ok) throw new Error('HTTP ' + response.status);
-                setTimeout(fetchData, 2300);
+                const response = await fetch('/api/config', { method: 'POST', body: formData });
+                const payload = await response.json();
+                if (!response.ok) throw new Error(payload.error || ('HTTP ' + response.status));
+                status.textContent = 'Current taper saved.';
+                status.className = 'status';
+                fetchData();
             } catch (err) {
-                status.textContent = 'Balance restart was not started: ' + err.message;
+                status.textContent = 'Taper save failed: ' + err.message;
                 status.className = 'status error';
-            } finally {
-                setTimeout(() => {
-                    restartingBalancing = false;
-                    button.disabled = false;
-                    button.textContent = 'Restart Balancing';
-                }, 2300);
             }
         }
 
@@ -976,17 +928,6 @@ static void handleApiBalancing(AsyncWebServerRequest* request) {
     Serial.println(g_bmsState.balancingEnabled ? "ON" : "OFF");
 
     request->send(200, "application/json", json);
-}
-
-static void handleApiBalanceRestart(AsyncWebServerRequest* request) {
-    if (!canRequestBalanceRecovery()) {
-        request->send(409, "application/json",
-                      "{\"error\":\"Balancing must be on and no restart may already be active\"}");
-        return;
-    }
-
-    request->send(202, "application/json",
-                  "{\"status\":\"balance_disable_pulse_started\",\"durationMs\":2000}");
 }
 
 static void handleApiCommand(AsyncWebServerRequest* request) {
@@ -1110,6 +1051,19 @@ static void handleApiConfig(AsyncWebServerRequest* request) {
         }
     }
 
+    BmsSettings validatedTaper = g_bmsSettings;
+    const bool hasCurrentTaper = request->hasParam("currentTaper", true);
+    if (hasCurrentTaper &&
+        !parseCurrentTaperConfig(request->getParam("currentTaper", true)->value().c_str(),
+                                 validatedTaper)) {
+        request->send(400, "application/json", "{\"error\":\"Invalid current taper\"}");
+        return;
+    }
+    if (hasCurrentTaper) {
+        g_bmsSettings = validatedTaper;
+        Serial.println("[Web] Current taper updated atomically");
+    }
+
     if (request->hasParam("expectedCmusA", true)) {
         g_bmsSettings.expectedCmusA = request->getParam("expectedCmusA", true)->value().toInt();
     }
@@ -1170,9 +1124,6 @@ void webServerInit() {
     s_server.on("/api/module/20", HTTP_GET, [](AsyncWebServerRequest* r) { handleApiModuleN(r, 20); });
 
     s_server.on("/api/summary", HTTP_GET, handleApiSummary);
-    s_server.on("/api/balancing/restart", HTTP_POST, handleApiBalanceRestart);
-    // ESPAsyncWebServer resolves matching routes in registration order. Keep
-    // the longer recovery route before the /api/balancing prefix.
     s_server.on("/api/balancing", HTTP_POST, handleApiBalancing);
     s_server.on("/api/command", HTTP_POST, handleApiCommand);
     s_server.on("/api/help", HTTP_GET, [](AsyncWebServerRequest* request) {
