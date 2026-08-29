@@ -12,6 +12,7 @@
 #include "bms_data.h"
 #include "config.h"
 #include "protection.h"
+#include "soc_calc.h"
 #include <WiFi.h>
 #include <PubSubClient.h>
 
@@ -39,6 +40,9 @@ bool s_packDiscoverySent = false;
 bool s_forcePublish = true;
 String s_lastProtection;
 int s_lastSoc = -1;
+int s_lastUnfilteredSoc = -1;
+long s_lastFilteredSocCellMv = -1;
+String s_lastSocCurvePoints;
 long s_lastPackVoltageMv = -1;
 int s_lastAvgTempTenths = -10000;
 int s_lastMaximumTempTenths = -10000;
@@ -116,6 +120,12 @@ void publishPackDiscovery() {
     const String device = packDeviceJson();
     const String root = baseTopic() + "/pack/";
     publishDiscovery("outlander_bms_soc", "State of Charge", root + "soc", "%", "battery", "measurement", device, 0);
+    publishDiscovery("outlander_bms_soc_unfiltered", "Unfiltered State of Charge",
+                     root + "soc_unfiltered", "%", "", "measurement", device, 0);
+    publishDiscovery("outlander_bms_soc_filtered_cell_voltage", "SOC Filtered Minimum Cell Voltage",
+                     root + "soc_filtered_cell_voltage", "V", "voltage", "measurement", device, 3);
+    publishDiscovery("outlander_bms_soc_curve_points", "SOC Curve Points",
+                     root + "soc_curve_points", "", "", "", device);
     publishDiscovery("outlander_bms_pack_voltage", "Pack Voltage", root + "voltage", "V", "voltage", "measurement", device, 2);
     publishDiscovery("outlander_bms_average_temperature", "Average Temperature", root + "average_temperature", "°C", "temperature", "measurement", device, 1);
     publishDiscovery("outlander_bms_maximum_temperature", "Maximum Temperature", root + "maximum_temperature", "°C", "temperature", "measurement", device, 1);
@@ -246,6 +256,27 @@ void publishFastSummary() {
     const int avgTempTenths = lroundf(g_bmsState.avgTemp * 10.0f);
     if (s_forcePublish || g_bmsState.soc != s_lastSoc) {
         publish(root + "soc", String(g_bmsState.soc)); s_lastSoc = g_bmsState.soc;
+    }
+    const int unfilteredSoc = socUnfilteredPercent();
+    if (s_forcePublish || unfilteredSoc != s_lastUnfilteredSoc) {
+        publish(root + "soc_unfiltered", String(unfilteredSoc));
+        s_lastUnfilteredSoc = unfilteredSoc;
+    }
+    const long filteredSocCellMv = socFilteredCellMv();
+    if (filteredSocCellMv > 0 &&
+        (s_forcePublish || filteredSocCellMv != s_lastFilteredSocCellMv)) {
+        publish(root + "soc_filtered_cell_voltage", String(filteredSocCellMv / 1000.0f, 3));
+        s_lastFilteredSocCellMv = filteredSocCellMv;
+    }
+    char curveBuffer[160] = {};
+    if (formatSocCurvePoints(g_bmsSettings.socCurvePoints,
+                             g_bmsSettings.socCurvePointCount,
+                             curveBuffer, sizeof(curveBuffer))) {
+        const String curveText(curveBuffer);
+        if (s_forcePublish || curveText != s_lastSocCurvePoints) {
+            publish(root + "soc_curve_points", curveText);
+            s_lastSocCurvePoints = curveText;
+        }
     }
     if (s_forcePublish || packVoltageMv != s_lastPackVoltageMv) {
         publish(root + "voltage", String(packVoltageMv / 1000.0f, 2)); s_lastPackVoltageMv = packVoltageMv;

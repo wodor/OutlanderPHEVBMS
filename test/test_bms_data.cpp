@@ -239,10 +239,13 @@ void test_settings_defaults() {
     TEST_ASSERT_FLOAT_WITHIN(0.1f, 65.0f, settings.overTemp);
     
     // SOC curve defaults
-    TEST_ASSERT_EQUAL_INT(3500, settings.socVoltageCurve[0]);
+    TEST_ASSERT_EQUAL_INT(3200, settings.socVoltageCurve[0]);
     TEST_ASSERT_EQUAL_INT(0, settings.socVoltageCurve[1]);
-    TEST_ASSERT_EQUAL_INT(4100, settings.socVoltageCurve[2]);
+    TEST_ASSERT_EQUAL_INT(4050, settings.socVoltageCurve[2]);
     TEST_ASSERT_EQUAL_INT(100, settings.socVoltageCurve[3]);
+    TEST_ASSERT_EQUAL_INT(12, settings.socCurvePointCount);
+    TEST_ASSERT_EQUAL_INT(3490, settings.socCurvePoints[1].voltageMv);
+    TEST_ASSERT_EQUAL_INT(10, settings.socCurvePoints[1].socPercent);
     TEST_ASSERT_TRUE(settings.useVoltageSoc);
 }
 
@@ -262,12 +265,13 @@ void test_settings_soc_curve_save_reload() {
     TEST_ASSERT_EQUAL_INT(5, g_bmsSettings.socVoltageCurve[1]);
     TEST_ASSERT_EQUAL_INT(4200, g_bmsSettings.socVoltageCurve[2]);
     TEST_ASSERT_EQUAL_INT(95, g_bmsSettings.socVoltageCurve[3]);
+    TEST_ASSERT_EQUAL_INT(2, g_bmsSettings.socCurvePointCount);
     TEST_ASSERT_FALSE(g_bmsSettings.useVoltageSoc);
 }
 
 void test_settings_load_migrates_historical_soc_high_voltage_endpoints() {
-    const int legacyEndpoints[] = {4000, 4050};
-    const int expectedEndpoints[] = {4050, 4100};
+    const int legacyEndpoints[] = {4000};
+    const int expectedEndpoints[] = {4050};
 
     for (size_t i = 0; i < sizeof(legacyEndpoints) / sizeof(legacyEndpoints[0]); ++i) {
         Preferences::clearAll();
@@ -288,7 +292,7 @@ void test_settings_load_migrates_historical_soc_high_voltage_endpoints() {
 }
 
 void test_settings_load_preserves_current_and_emergency_soc_high_voltage_endpoints() {
-    const int endpoints[] = {4100, 4200};
+    const int endpoints[] = {4050, 4100, 4200};
     for (size_t i = 0; i < sizeof(endpoints) / sizeof(endpoints[0]); ++i) {
         Preferences::clearAll();
         g_bmsSettings = BmsSettings();
@@ -326,6 +330,63 @@ void test_soc_curve_validation_rejects_invalid_without_mutation() {
         TEST_ASSERT_EQUAL_INT(4200, curve[2]);
         TEST_ASSERT_EQUAL_INT(90, curve[3]);
     }
+}
+
+void test_soc_curve_points_parse_interpolate_and_format() {
+    SocCurvePoint points[SOC_CURVE_MAX_POINTS] = {};
+    uint8_t count = 0;
+    const char* fitted =
+        "3200:0,3490:10,3580:11,3625:13,3710:18,3795:37,"
+        "3840:46,3880:56,3925:68,3965:87,4020:100,4050:100";
+    TEST_ASSERT_TRUE(parseSocCurvePoints(fitted, points, count));
+    TEST_ASSERT_EQUAL_INT(12, count);
+    TEST_ASSERT_EQUAL_INT(0, interpolateSocCurve(3100, points, count));
+    TEST_ASSERT_EQUAL_INT(10, interpolateSocCurve(3490, points, count));
+    TEST_ASSERT_EQUAL_INT(15, interpolateSocCurve(3675, points, count));
+    TEST_ASSERT_EQUAL_INT(100, interpolateSocCurve(4030, points, count));
+
+    char formatted[160] = {};
+    TEST_ASSERT_TRUE(formatSocCurvePoints(points, count, formatted, sizeof(formatted)));
+    TEST_ASSERT_EQUAL_STRING(fitted, formatted);
+}
+
+void test_soc_curve_points_reject_invalid_without_mutation() {
+    const char* invalid[] = {
+        "3200:0",
+        "3200:0,3200:10,4050:100", "3200:0,3500:20,3600:19,4050:100",
+        "1999:0,4050:100", "3200:0,5001:100", "3200:0,4050:100,",
+        " 3200:0,4050:100", "3200:0,4050:100 "
+    };
+    for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
+        SocCurvePoint points[SOC_CURVE_MAX_POINTS] = {{3333, 33}};
+        uint8_t count = 7;
+        TEST_ASSERT_FALSE(parseSocCurvePoints(invalid[i], points, count));
+        TEST_ASSERT_EQUAL_INT(3333, points[0].voltageMv);
+        TEST_ASSERT_EQUAL_INT(33, points[0].socPercent);
+        TEST_ASSERT_EQUAL_INT(7, count);
+    }
+}
+
+void test_settings_soc_curve_points_save_reload_and_corruption_fallback() {
+    const SocCurvePoint custom[] = {{3200, 0}, {3500, 10}, {3900, 75}, {4050, 100}};
+    TEST_ASSERT_TRUE(settingsSetSocCurvePoints(custom, 4));
+    settingsSave();
+
+    g_bmsSettings = BmsSettings();
+    settingsLoad();
+    TEST_ASSERT_EQUAL_INT(4, g_bmsSettings.socCurvePointCount);
+    TEST_ASSERT_EQUAL_INT(75, g_bmsSettings.socCurvePoints[2].socPercent);
+
+    Preferences prefs;
+    prefs.begin("bms", false);
+    const uint32_t corrupt = 0x12345678U;
+    prefs.putBytes("socPts", &corrupt, sizeof(corrupt));
+    prefs.end();
+
+    g_bmsSettings = BmsSettings();
+    settingsLoad();
+    TEST_ASSERT_EQUAL_INT(12, g_bmsSettings.socCurvePointCount);
+    TEST_ASSERT_EQUAL_INT(3490, g_bmsSettings.socCurvePoints[1].voltageMv);
 }
 
 /**

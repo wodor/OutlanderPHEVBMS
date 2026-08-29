@@ -11,6 +11,7 @@
 
 #include <Arduino.h>
 #include "config.h"
+#include "soc_curve_validation.h"
 
 /**
  * EMBEDDED CONCEPT: Structs for Data Organization
@@ -66,9 +67,12 @@ struct BmsSettings {
     // stop. Cell-voltage emergency stops are fixed safety backstops in
     // protection.cpp; charge/discharge limits belong to PowerWall-Gateway.
     float overTemp;             // Overheat fault threshold (default: 65°C)
-    // SOC voltage curve (for voltage-based SOC)
-    // Maps voltage to SOC: [lowVolt_mV, lowSOC_%, highVolt_mV, highSOC_%]
-    int socVoltageCurve[4];     // Default: [3500, 0, 4100, 100]
+    // Legacy endpoints remain available to existing APIs and design-voltage
+    // consumers. The authoritative telemetry mapping is the monotonic point
+    // table below.
+    int socVoltageCurve[4];
+    SocCurvePoint socCurvePoints[SOC_CURVE_MAX_POINTS];
+    uint8_t socCurvePointCount;
     bool useVoltageSoc;         // Retained configuration compatibility; SOC is voltage-derived
     
     // Expected CMUs configuration (bitmask for IDs 1-10)
@@ -78,12 +82,20 @@ struct BmsSettings {
     // Constructor with defaults
     BmsSettings() :
         overTemp(65.0f),
-        socVoltageCurve{3500, 0, 4100, 100},
+        socVoltageCurve{3200, 0, 4050, 100},
+        socCurvePoints{{3200, 0}, {3490, 10}, {3580, 11}, {3625, 13},
+                       {3710, 18}, {3795, 37}, {3840, 46}, {3880, 56},
+                       {3925, 68}, {3965, 87}, {4020, 100}, {4050, 100}},
+        socCurvePointCount(12),
         useVoltageSoc(true),
         expectedCmusA(0x3FF),   // Default: expect all 10 CMUs on Bus A
         expectedCmusB(0x3FF)    // Default: expect all 10 CMUs on Bus B
     {}
 };
+
+bool settingsSetSocCurvePoints(const SocCurvePoint* points, uint8_t count);
+int settingsSocCurveLowVoltageMv();
+int settingsSocCurveHighVoltageMv();
 
 // A detected CMU may be left unselected while a second CAN segment is being
 // surveyed. Its data remains available for diagnostics, but must never affect

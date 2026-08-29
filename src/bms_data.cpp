@@ -20,7 +20,9 @@
 // Preferences object for NVS storage
 static Preferences s_prefs;
 static const char* NVS_NAMESPACE = "bms";
-static constexpr int VOLTAGE_POLICY_REVISION = 1;
+static constexpr int VOLTAGE_POLICY_REVISION = 2;
+static constexpr uint8_t SOC_CURVE_STORAGE_VERSION = 1;
+static const char* SOC_CURVE_NVS_KEY = "socPts";
 
 // =============================================================================
 // GLOBAL STATE DEFINITION
@@ -44,6 +46,53 @@ BmsState g_bmsState;
 BmsSettings g_bmsSettings;
 
 namespace {
+struct PersistedSocCurve {
+    uint8_t version;
+    uint8_t count;
+    uint16_t reserved;
+    SocCurvePoint points[SOC_CURVE_MAX_POINTS];
+    uint32_t crc32;
+};
+
+uint32_t crc32(const uint8_t* data, size_t length) {
+    uint32_t crc = 0xFFFFFFFFU;
+    for (size_t i = 0; i < length; ++i) {
+        crc ^= data[i];
+        for (uint8_t bit = 0; bit < 8; ++bit) {
+            crc = (crc >> 1U) ^ (0xEDB88320U & (0U - (crc & 1U)));
+        }
+    }
+    return ~crc;
+}
+
+uint32_t curveBlobCrc(const PersistedSocCurve& blob) {
+    return crc32(reinterpret_cast<const uint8_t*>(&blob),
+                 offsetof(PersistedSocCurve, crc32));
+}
+
+bool loadPersistedSocCurve(SocCurvePoint* points, uint8_t& count) {
+    if (s_prefs.getBytesLength(SOC_CURVE_NVS_KEY) != sizeof(PersistedSocCurve)) return false;
+    PersistedSocCurve blob = {};
+    if (s_prefs.getBytes(SOC_CURVE_NVS_KEY, &blob, sizeof(blob)) != sizeof(blob) ||
+        blob.version != SOC_CURVE_STORAGE_VERSION || blob.crc32 != curveBlobCrc(blob) ||
+        !validateSocCurvePoints(blob.points, blob.count)) {
+        return false;
+    }
+    memcpy(points, blob.points, sizeof(SocCurvePoint) * blob.count);
+    count = blob.count;
+    return true;
+}
+
+void storePersistedSocCurve() {
+    PersistedSocCurve blob = {};
+    blob.version = SOC_CURVE_STORAGE_VERSION;
+    blob.count = g_bmsSettings.socCurvePointCount;
+    memcpy(blob.points, g_bmsSettings.socCurvePoints,
+           sizeof(SocCurvePoint) * blob.count);
+    blob.crc32 = curveBlobCrc(blob);
+    s_prefs.putBytes(SOC_CURVE_NVS_KEY, &blob, sizeof(blob));
+}
+
 // Apply the agreed normal-use voltage policy to the two historical endpoints
 // that this firmware has previously persisted.  4.20 V remains exclusively
 // the emergency ceiling enforced in protection.cpp, not an SOC/design target.
@@ -51,10 +100,6 @@ bool migrateSocHighVoltageEndpoint() {
     int& highVoltageMv = g_bmsSettings.socVoltageCurve[2];
     if (highVoltageMv == 4000) {
         highVoltageMv = 4050;
-        return true;
-    }
-    if (highVoltageMv == 4050) {
-        highVoltageMv = 4100;
         return true;
     }
     return false;
@@ -66,6 +111,26 @@ void recordVoltagePolicyMigration() {
     s_prefs.end();
 }
 }  // namespace
+
+bool settingsSetSocCurvePoints(const SocCurvePoint* points, uint8_t count) {
+    if (!validateSocCurvePoints(points, count)) return false;
+    memset(g_bmsSettings.socCurvePoints, 0, sizeof(g_bmsSettings.socCurvePoints));
+    memcpy(g_bmsSettings.socCurvePoints, points, sizeof(SocCurvePoint) * count);
+    g_bmsSettings.socCurvePointCount = count;
+    g_bmsSettings.socVoltageCurve[0] = points[0].voltageMv;
+    g_bmsSettings.socVoltageCurve[1] = points[0].socPercent;
+    g_bmsSettings.socVoltageCurve[2] = points[count - 1].voltageMv;
+    g_bmsSettings.socVoltageCurve[3] = points[count - 1].socPercent;
+    return true;
+}
+
+int settingsSocCurveLowVoltageMv() {
+    return g_bmsSettings.socCurvePoints[0].voltageMv;
+}
+
+int settingsSocCurveHighVoltageMv() {
+    return g_bmsSettings.socCurvePoints[g_bmsSettings.socCurvePointCount - 1].voltageMv;
+}
 
 void settingsLoad() {
     s_prefs.begin(NVS_NAMESPACE, true); // Read-only
@@ -84,26 +149,72 @@ void settingsLoad() {
     const bool needsVoltagePolicyMigration =
         s_prefs.getInt("vPolRev", 0) < VOLTAGE_POLICY_REVISION;
 
+    SocCurvePoint persistedPoints[SOC_CURVE_MAX_POINTS] = {};
+    uint8_t persistedCount = 0;
+    const bool hasValidPersistedCurve = loadPersistedSocCurve(persistedPoints, persistedCount);
+
     s_prefs.end();
 
-    if (needsVoltagePolicyMigration && migrateSocHighVoltageEndpoint()) {
-        Serial.printf("[BMS] Migrated SOC high-voltage endpoint to %d mV\n",
-                      g_bmsSettings.socVoltageCurve[2]);
-        settingsSave();
+    bool settingsChanged = false;
+    if (needsVoltagePolicyMigration) {
+        if (migrateSocHighVoltageEndpoint()) {
+            Serial.printf("[BMS] Migrated SOC high-voltage endpoint to %d mV\n",
+                          g_bmsSettings.socVoltageCurve[2]);
+            settingsChanged = true;
+        }
+        if (hasValidPersistedCurve && persistedCount >= SOC_CURVE_MIN_POINTS &&
+            persistedPoints[persistedCount - 1].voltageMv == 4000) {
+            persistedPoints[persistedCount - 1].voltageMv = 4050;
+            settingsChanged = true;
+        }
         recordVoltagePolicyMigration();
     }
+
+    if (hasValidPersistedCurve) {
+        settingsSetSocCurvePoints(persistedPoints, persistedCount);
+    } else if (g_bmsSettings.socVoltageCurve[0] == 3200 &&
+               g_bmsSettings.socVoltageCurve[1] == 0 &&
+               g_bmsSettings.socVoltageCurve[2] == 4050 &&
+               g_bmsSettings.socVoltageCurve[3] == 100) {
+        // The constructor already contains the measured 80-cell fitted curve.
+        settingsChanged = true;
+    } else {
+        const SocCurvePoint legacy[] = {
+            {g_bmsSettings.socVoltageCurve[0], g_bmsSettings.socVoltageCurve[1]},
+            {g_bmsSettings.socVoltageCurve[2], g_bmsSettings.socVoltageCurve[3]},
+        };
+        settingsSetSocCurvePoints(legacy, 2);
+        settingsChanged = true;
+    }
+
+    if (settingsChanged) settingsSave();
 
     Serial.println("[BMS] Settings loaded from NVS");
     Serial.printf("[BMS] Expected CMUs A: 0x%03X, B: 0x%03X\n",
                   g_bmsSettings.expectedCmusA, g_bmsSettings.expectedCmusB);
     Serial.println("[BMS] Both CAN buses are dedicated to CMU traffic; MQTT is the external transport");
-    Serial.printf("[BMS] SOC curve: [%d,%d,%d,%d] useVoltageSoc=%s\n",
+    Serial.printf("[BMS] SOC curve: %u points, endpoints [%d,%d,%d,%d] useVoltageSoc=%s\n",
+                  static_cast<unsigned>(g_bmsSettings.socCurvePointCount),
                   g_bmsSettings.socVoltageCurve[0], g_bmsSettings.socVoltageCurve[1],
                   g_bmsSettings.socVoltageCurve[2], g_bmsSettings.socVoltageCurve[3],
                   g_bmsSettings.useVoltageSoc ? "YES" : "NO");
 }
 
 void settingsSave() {
+    const SocCurvePoint& first = g_bmsSettings.socCurvePoints[0];
+    const SocCurvePoint& last =
+        g_bmsSettings.socCurvePoints[g_bmsSettings.socCurvePointCount - 1];
+    if (first.voltageMv != g_bmsSettings.socVoltageCurve[0] ||
+        first.socPercent != g_bmsSettings.socVoltageCurve[1] ||
+        last.voltageMv != g_bmsSettings.socVoltageCurve[2] ||
+        last.socPercent != g_bmsSettings.socVoltageCurve[3]) {
+        const SocCurvePoint legacy[] = {
+            {g_bmsSettings.socVoltageCurve[0], g_bmsSettings.socVoltageCurve[1]},
+            {g_bmsSettings.socVoltageCurve[2], g_bmsSettings.socVoltageCurve[3]},
+        };
+        settingsSetSocCurvePoints(legacy, 2);
+    }
+
     s_prefs.begin(NVS_NAMESPACE, false); // Read/write
 
     s_prefs.putUInt("cmusA", g_bmsSettings.expectedCmusA);
@@ -113,6 +224,7 @@ void settingsSave() {
     s_prefs.putInt("socV2", g_bmsSettings.socVoltageCurve[2]);
     s_prefs.putInt("socV3", g_bmsSettings.socVoltageCurve[3]);
     s_prefs.putBool("useVSoc", g_bmsSettings.useVoltageSoc);
+    storePersistedSocCurve();
 
     s_prefs.end();
     Serial.println("[BMS] Settings saved to NVS");

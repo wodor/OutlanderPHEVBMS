@@ -6,6 +6,7 @@
 #include <unity.h>
 #include "../src/bms_data.h"
 #include "../src/protection.h"
+#include "../src/soc_calc.h"
 #include <Preferences.h>
 
 extern BmsState g_bmsState;
@@ -28,11 +29,18 @@ void test_settings_load_migrates_historical_soc_high_voltage_endpoints();
 void test_settings_load_preserves_current_and_emergency_soc_high_voltage_endpoints();
 void test_soc_curve_validation_accepts_exact_ordered_values();
 void test_soc_curve_validation_rejects_invalid_without_mutation();
+void test_soc_curve_points_parse_interpolate_and_format();
+void test_soc_curve_points_reject_invalid_without_mutation();
+void test_settings_soc_curve_points_save_reload_and_corruption_fallback();
 void test_cmu_data_init();
 
 // Test functions from test_soc_calc.cpp
-void test_soc_update_uses_voltage_curve();
+void test_soc_update_uses_piecewise_voltage_curve();
 void test_soc_no_data_defaults_to_zero();
+void test_soc_filter_rejects_brief_sag_then_accepts_sustained_sag();
+void test_soc_filter_limits_upward_recovery();
+void test_soc_curve_matches_recorded_discharge_energy();
+void test_soc_filter_upward_timer_handles_millis_rollover();
 
 // Test functions from test_protection.cpp
 void test_safety_output_defaults_high();
@@ -56,6 +64,7 @@ void setUp(void) {
     Preferences::clearAll();
     g_bmsState = BmsState();
     g_bmsSettings = BmsSettings();
+    socResetFilter();
     protectionInit();
     g_mockMillis = 0;
 }
@@ -87,11 +96,18 @@ int main(int argc, char **argv) {
     RUN_TEST(test_settings_load_preserves_current_and_emergency_soc_high_voltage_endpoints);
     RUN_TEST(test_soc_curve_validation_accepts_exact_ordered_values);
     RUN_TEST(test_soc_curve_validation_rejects_invalid_without_mutation);
+    RUN_TEST(test_soc_curve_points_parse_interpolate_and_format);
+    RUN_TEST(test_soc_curve_points_reject_invalid_without_mutation);
+    RUN_TEST(test_settings_soc_curve_points_save_reload_and_corruption_fallback);
     RUN_TEST(test_cmu_data_init);
 
     // SOC calculation tests
-    RUN_TEST(test_soc_update_uses_voltage_curve);
+    RUN_TEST(test_soc_update_uses_piecewise_voltage_curve);
     RUN_TEST(test_soc_no_data_defaults_to_zero);
+    RUN_TEST(test_soc_filter_rejects_brief_sag_then_accepts_sustained_sag);
+    RUN_TEST(test_soc_filter_limits_upward_recovery);
+    RUN_TEST(test_soc_curve_matches_recorded_discharge_energy);
+    RUN_TEST(test_soc_filter_upward_timer_handles_millis_rollover);
 
     // Protection tests
     RUN_TEST(test_safety_output_defaults_high);

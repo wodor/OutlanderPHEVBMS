@@ -188,6 +188,23 @@ Connect via USB serial (115200 baud) and use these commands:
 
 The dashboard exposes these through `POST /api/command` with form field `command`. For `A` and `B`, add `mask=HEX`; for example `command=B&mask=3FF`. `GET /api/help` returns the same mapping. The existing `/api/summary`, `/api/module/N`, `/api/balancing`, `/api/balancing/restart`, `/api/config`, and `/api/reboot` endpoints remain available.
 
+The inverter-facing SOC uses a configurable monotonic piecewise curve. Each
+point is `cell_millivolts:percent`; voltages must increase and percentages may
+increase or stay flat. The fitted 80-cell curve maps the observed weak-cell
+knee at 3.49 V to the inverter's 10% reserve while retaining 3.20 V as 0%:
+
+```bash
+curl -X POST http://outlander-bms.local/api/config \
+  --data-urlencode 'socCurvePoints=3200:0,3490:10,3580:11,3625:13,3710:18,3795:37,3840:46,3880:56,3925:68,3965:87,4020:100,4050:100'
+```
+
+The historical `socCurve=lowMv,lowPercent,highMv,highPercent` form remains
+accepted and installs a two-point curve. MQTT and `/api/summary` expose the
+unfiltered mapped SOC, the 15-second median cell voltage, and the active curve
+for diagnosis. Brief downward voltage sag is median-filtered; upward recovery
+is limited to one percentage point per 30 seconds. Raw cell extrema still own
+protection and current taper.
+
 ## Current configuration reference
 
 The active settings are defined in `src/bms_data.h`. They are limited to the
@@ -196,10 +213,10 @@ bus role. Emergency cell-voltage stops and the GPIO15 permissive are fixed in
 `src/protection.cpp`; this project does not set inverter charge/discharge
 operating limits.
 
-On startup, the firmware migrates the historical voltage-SOC high endpoints
-from 4.00 V to 4.05 V and from 4.05 V to 4.10 V, then persists the result.
-The 4.20 V emergency cell-voltage stop remains a separate absolute safety
-ceiling and is never a normal SOC/design target.
+On startup, the firmware migrates the historical 4.00 V voltage-SOC endpoint
+to 4.05 V. An existing 4.05 V endpoint remains unchanged. The 4.20 V emergency
+cell-voltage stop remains a separate absolute safety ceiling and is never a
+normal SOC/design target.
 
 ## Project Structure (historical entries marked below)
 

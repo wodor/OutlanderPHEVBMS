@@ -16,6 +16,7 @@
 
 #include "web_server.h"
 #include "soc_curve_validation.h"
+#include "soc_calc.h"
 #include "config.h"
 #include "bms_data.h"
 #include "protection.h"
@@ -160,6 +161,10 @@ static String buildSummaryJson() {
 
     const bool batterySafeToUse = digitalRead(PIN_BATTERY_SAFE_TO_USE) == HIGH;
     const CanStats canStats = canGetStats();
+    char socCurveText[160] = {};
+    formatSocCurvePoints(g_bmsSettings.socCurvePoints,
+                         g_bmsSettings.socCurvePointCount,
+                         socCurveText, sizeof(socCurveText));
 
     String json = "{";
     json += "\"modulesPresent\":" + String(presentCount) + ",";
@@ -173,6 +178,9 @@ static String buildSummaryJson() {
     json += "\"highestTemp\":" + String(g_bmsState.highestTemp, 1) + ",";
     json += "\"avgTemp\":" + String(g_bmsState.avgTemp, 1) + ",";
     json += "\"soc\":" + String(g_bmsState.soc) + ",";
+    json += "\"socUnfiltered\":" + String(socUnfilteredPercent()) + ",";
+    json += "\"socFilteredCellMv\":" + String(socFilteredCellMv()) + ",";
+    json += "\"socCurvePoints\":\"" + String(socCurveText) + "\",";
     json += "\"balancingEnabled\":" + String(g_bmsState.balancingEnabled ? "true" : "false") + ",";
     json += "\"balanceTargetMv\":" + String(g_bmsState.balancingEnabled ? g_bmsState.balanceTargetMv : 0) + ",";
     json += "\"cellsBalancing\":" + String(balancingCount) + ",";
@@ -1075,10 +1083,29 @@ static void handleApiReboot(AsyncWebServerRequest* request) {
 static void handleApiConfig(AsyncWebServerRequest* request) {
     int validatedSocCurve[4];
     const bool hasSocCurve = request->hasParam("socCurve", true);
+    const bool hasSocCurvePoints = request->hasParam("socCurvePoints", true);
+    if (hasSocCurve && hasSocCurvePoints) {
+        request->send(400, "application/json",
+                      "{\"error\":\"Specify socCurve or socCurvePoints, not both\"}");
+        return;
+    }
+
+    SocCurvePoint validatedSocPoints[SOC_CURVE_MAX_POINTS] = {};
+    uint8_t validatedSocPointCount = 0;
     if (hasSocCurve) {
         const String curve = request->getParam("socCurve", true)->value();
         if (!parseSocVoltageCurve(curve.c_str(), validatedSocCurve)) {
             request->send(400, "application/json", "{\"error\":\"Invalid SOC curve\"}");
+            return;
+        }
+        validatedSocPoints[0] = {validatedSocCurve[0], validatedSocCurve[1]};
+        validatedSocPoints[1] = {validatedSocCurve[2], validatedSocCurve[3]};
+        validatedSocPointCount = 2;
+    } else if (hasSocCurvePoints) {
+        const String curve = request->getParam("socCurvePoints", true)->value();
+        if (!parseSocCurvePoints(curve.c_str(), validatedSocPoints,
+                                 validatedSocPointCount)) {
+            request->send(400, "application/json", "{\"error\":\"Invalid SOC curve points\"}");
             return;
         }
     }
@@ -1090,13 +1117,12 @@ static void handleApiConfig(AsyncWebServerRequest* request) {
         g_bmsSettings.expectedCmusB = request->getParam("expectedCmusB", true)->value().toInt();
     }
 
-    if (hasSocCurve) {
-        for (int i = 0; i < 4; ++i) g_bmsSettings.socVoltageCurve[i] = validatedSocCurve[i];
-        Serial.printf("[Web] SOC curve set to [%d,%d,%d,%d]\n",
-                      g_bmsSettings.socVoltageCurve[0], g_bmsSettings.socVoltageCurve[1],
-                      g_bmsSettings.socVoltageCurve[2], g_bmsSettings.socVoltageCurve[3]);
+    if (hasSocCurve || hasSocCurvePoints) {
+        settingsSetSocCurvePoints(validatedSocPoints, validatedSocPointCount);
+        socResetFilter();
+        Serial.printf("[Web] SOC curve set to %u validated points\n",
+                      static_cast<unsigned>(validatedSocPointCount));
     }
-
     if (request->hasParam("useVoltageSoc", true)) {
         String val = request->getParam("useVoltageSoc", true)->value();
         g_bmsSettings.useVoltageSoc = (val == "1" || val == "true");

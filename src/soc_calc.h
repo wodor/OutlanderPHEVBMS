@@ -9,3 +9,6 @@
 void socInit();
 void socUpdate();
 int socCalculateFromVoltage();
+void socResetFilter();
+int socUnfilteredPercent();
+long socFilteredCellMv();
