@@ -5,16 +5,25 @@ It reads cell voltages and temperatures from Mitsubishi Outlander PHEV battery
 modules over CAN and provides monitoring, balancing, MQTT telemetry, and a
 physical safety permissive for DIY home energy storage.
 
-## Current runtime contract (verified 20 August 2026)
+## Current runtime contract (verified 29 August 2026)
 
 The current firmware is a standalone CMU monitoring/safety controller. It reads CMU CAN data, controls balancing, publishes MQTT telemetry, and drives one physical permissive: GPIO15 `BATTERY_SAFE_TO_USE` (active HIGH). GPIO15 goes LOW for high temperature, no CAN data for 10 seconds, a selected CMU missing for 10 seconds, any cell at or above 4.20 V, or any cell at or below 2.80 V. Temperature and communication trips cannot be overridden. The external breaker interface must open when this normally-HIGH permissive goes LOW.
 
-This firmware does not read amperage, perform coulomb counting, control inverter current, run ESS contactor sequencing, or emit inverter-side SIMPBMS/FoxESS frames. It has no Battery-Emulator application dependency. MQTT is its current external telemetry interface. A future dedicated framed serial sender will feed the standalone PowerWall-Gateway on the T-CAN485; it is not implemented yet. SOC is voltage-derived telemetry/fallback data. The live device is at `http://192.168.2.90/`.
+This firmware does not read amperage or perform coulomb counting. It calculates
+cell-voltage-derived charge/discharge current ceilings for PowerWall-Gateway,
+but does not control inverter work modes, run ESS contactor sequencing, or emit
+inverter-side SIMPBMS/FoxESS frames. It has no Battery-Emulator application
+dependency. MQTT is its current external interface. A future dedicated framed
+serial sender will feed the standalone gateway; it is not implemented yet. SOC
+is voltage-derived telemetry/fallback data. The live device is at
+`http://192.168.2.90/`.
 
-The 20 August read-only `/api/summary` check reported 8/8 expected CMUs,
-248.56 V, 3.877–3.888 V cells, 18.2 °C maximum temperature, protection `OK`,
-fresh CAN data, and GPIO15 HIGH. This proves the observed runtime contract, not
-that the installed binary was built from the latest source commit.
+The 29 August post-upload `/api/summary` check reported all 10 selected CMUs,
+321.38 V, 4.012–4.032 V cells, SOC 98%, 2.2 A charge and 11.0 A discharge
+ceilings, protection `OK`, fresh CAN data, TWAI running with zero transmit or
+bus errors, and GPIO15 HIGH. The deployed OTA image SHA-256 is
+`06abff53ecca45a39a298674581f89de76f3bd0da91a0492747fca3395676d7d`;
+its source is captured by commits `5c44ffb` and `2859006`.
 
 Balancing-cell count MQTT telemetry is deliberately published at a 10-second interval. Per-CMU maximum temperature topics and the overall pack maximum temperature topic are published with the other BMS telemetry.
 
@@ -186,7 +195,25 @@ Connect via USB serial (115200 baud) and use these commands:
 - `B` - Set the expected Bus B CMU mask, entered as hexadecimal
 - `h` or `?` - Show help
 
-The dashboard exposes these through `POST /api/command` with form field `command`. For `A` and `B`, add `mask=HEX`; for example `command=B&mask=3FF`. `GET /api/help` returns the same mapping. The existing `/api/summary`, `/api/module/N`, `/api/balancing`, `/api/balancing/restart`, `/api/config`, and `/api/reboot` endpoints remain available.
+The dashboard exposes these through `POST /api/command` with form field `command`. For `A` and `B`, add `mask=HEX`; for example `command=B&mask=3FF`. `GET /api/help` returns the same mapping. The existing `/api/summary`, `/api/module/N`, `/api/balancing`, `/api/config`, and `/api/reboot` endpoints remain available.
+
+The former `/api/balancing/restart` pulse was removed because it only paused
+balance commands for two seconds; it did not reset or recover a CMU. Use the
+normal balancing toggle and CAN diagnostics instead of treating that pulse as
+a hardware recovery mechanism.
+
+The current taper is persisted in NVS and can be replaced atomically without a
+firmware rebuild. Values are charge full/reduced/stop voltage, charge
+full/reduced current, then the equivalent discharge values, in volts and amps:
+
+```bash
+curl -X POST http://outlander-bms.local/api/config \
+  --data-urlencode 'currentTaper=3.900,4.050,4.100,20.0,1.0,3.400,3.250,3.200,20.0,1.0'
+```
+
+`GET /api/summary` reports both the persisted curve and the live charge and
+discharge limits. Invalid, reversed, out-of-range, or partial curves are
+rejected without changing the active settings.
 
 The inverter-facing SOC uses a configurable monotonic piecewise curve. Each
 point is `cell_millivolts:percent`; voltages must increase and percentages may
@@ -207,11 +234,17 @@ protection and current taper.
 
 ## Current configuration reference
 
-The active settings are defined in `src/bms_data.h`. They are limited to the
-high-temperature trip, voltage-derived SOC curve, expected-CMU masks, and CAN
-bus role. Emergency cell-voltage stops and the GPIO15 permissive are fixed in
-`src/protection.cpp`; this project does not set inverter charge/discharge
-operating limits.
+The active settings are defined in `src/bms_data.h` and persisted in NVS. They
+include the high-temperature trip, voltage-derived SOC curve, expected-CMU
+masks, and the normal-use current taper. Emergency cell-voltage stops and the
+GPIO15 permissive remain fixed in `src/protection.cpp`.
+
+Charge current is governed only by the highest selected cell: 20 A through
+3.90 V, linearly tapered to 1 A at 4.05 V, and stopped at 4.10 V. Discharge is
+governed only by the lowest selected cell: 20 A at and above 3.40 V, linearly
+tapered to 1 A at 3.25 V, and stopped at 3.20 V. The BMS publishes the two
+limits atomically on `outlander_bms/pack/current_limits`; PowerWall-Gateway
+turns them into the FoxESS CAN current ceilings.
 
 On startup, the firmware migrates the historical 4.00 V voltage-SOC endpoint
 to 4.05 V. An existing 4.05 V endpoint remains unchanged. The 4.20 V emergency
@@ -231,6 +264,7 @@ normal SOC/design target.
 │   ├── wifi_handler.h/cpp # WiFi management
 │   ├── web_server.h/cpp   # Web dashboard
 │   ├── soc_calc.h/cpp     # Voltage-derived SOC
+│   ├── current_taper.h/cpp # Cell-extrema current ceilings
 │   └── protection.h/cpp   # GPIO15 safety permissive
 ├── test/
 │   ├── test_main.cpp      # Test entry point

@@ -198,13 +198,14 @@ This repository owns:
 - optional CMU balancing control;
 - MQTT, web, and serial telemetry/diagnostics;
 - voltage-derived SOC telemetry;
+- configurable, cell-extrema-derived charge/discharge current ceilings;
 - the active-HIGH GPIO15 `BATTERY_SAFE_TO_USE` physical permissive.
 
 This repository intentionally does **not** own:
 
 - pack-current measurement or coulomb counting;
 - FoxESS/inverter CAN framing;
-- charge/discharge operating-current policy;
+- inverter work-mode policy or direct Modbus current control;
 - ESS contactor or precharge sequencing;
 - Home Assistant operating-mode policy.
 
@@ -220,6 +221,10 @@ T-CAN485 receiver pins and protocol are finalized.
 - Temperature and communication faults cannot be overridden.
 - The supervised override can suppress only the emergency voltage trip and requires fresh CMU data plus safe temperature.
 - The configured 4.05/3.20 V SOC endpoints are telemetry/design values, not the 4.20/2.80 V emergency thresholds. Historical 4.00 V and 4.05 V high endpoints migrate to 4.05 V and 4.10 V respectively; 4.20 V is never a normal target.
+- Normal current ceilings use the highest selected cell for charge and lowest
+  selected cell for discharge. They are persisted in NVS, atomically editable
+  through `POST /api/config` as `currentTaper`, and published as an atomic MQTT
+  pair for PowerWall-Gateway. They never replace the fixed emergency trips.
 
 ## Current State and Remaining Work
 
