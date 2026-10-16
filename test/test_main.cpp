@@ -52,12 +52,16 @@ void test_soc_curve_matches_recorded_discharge_energy();
 void test_soc_filter_upward_timer_handles_millis_rollover();
 
 // Test functions from test_protection.cpp
-void test_safety_output_defaults_high();
+void test_safety_output_defaults_low();
+void test_first_protection_check_requires_complete_selected_data();
+void test_partial_startup_data_does_not_raise_safety_output();
+void test_missing_selected_cmu_keeps_safety_output_low();
+void test_each_required_frame_group_must_remain_fresh();
+void test_type_four_cannot_extend_cmu_health();
 void test_safety_output_drops_for_overtemperature();
-void test_safety_output_drops_after_ten_seconds_without_can();
-void test_safety_output_drops_for_stale_selected_cmu();
 void test_voltage_and_cold_temperature_do_not_drop_safety_output();
 void test_safety_output_drops_at_emergency_cell_voltage_limits();
+void test_complete_recovery_and_reset_require_new_complete_data();
 void test_supervised_override_lifts_voltage_trip_but_not_can_stop();
 void test_supervised_override_expires_after_ten_minutes();
 
@@ -128,12 +132,16 @@ int main(int argc, char **argv) {
     RUN_TEST(test_soc_filter_upward_timer_handles_millis_rollover);
 
     // Protection tests
-    RUN_TEST(test_safety_output_defaults_high);
+    RUN_TEST(test_safety_output_defaults_low);
+    RUN_TEST(test_first_protection_check_requires_complete_selected_data);
+    RUN_TEST(test_partial_startup_data_does_not_raise_safety_output);
+    RUN_TEST(test_missing_selected_cmu_keeps_safety_output_low);
+    RUN_TEST(test_each_required_frame_group_must_remain_fresh);
+    RUN_TEST(test_type_four_cannot_extend_cmu_health);
     RUN_TEST(test_safety_output_drops_for_overtemperature);
-    RUN_TEST(test_safety_output_drops_after_ten_seconds_without_can);
-    RUN_TEST(test_safety_output_drops_for_stale_selected_cmu);
     RUN_TEST(test_voltage_and_cold_temperature_do_not_drop_safety_output);
     RUN_TEST(test_safety_output_drops_at_emergency_cell_voltage_limits);
+    RUN_TEST(test_complete_recovery_and_reset_require_new_complete_data);
     RUN_TEST(test_supervised_override_lifts_voltage_trip_but_not_can_stop);
     RUN_TEST(test_supervised_override_expires_after_ten_minutes);
 

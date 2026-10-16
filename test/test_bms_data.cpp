@@ -334,16 +334,17 @@ void test_current_taper_fails_closed_until_selected_cells_are_complete_and_fresh
     g_bmsSettings.expectedCmusA = 0x001;
     g_bmsSettings.expectedCmusB = 0;
     CmuData& cmu = g_bmsState.modules[0];
-    cmu.present = true;
-    cmu.lastSeenTime = 100;
     g_mockMillis = 100;
-    for (int cell = 0; cell < CELLS_PER_MODULE - 1; ++cell) cmu.voltages[cell] = 3700;
+    for (int cell = 0; cell < CELLS_PER_MODULE; ++cell) cmu.voltages[cell] = 3700;
+    for (int sensor = 0; sensor < TEMPS_PER_MODULE; ++sensor) cmu.temperatures[sensor] = 25000;
+    cmu.recordRequiredFrame(MSG_TYPE_STATUS, g_mockMillis);
+    cmu.recordRequiredFrame(MSG_TYPE_VOLTS_1, g_mockMillis);
     g_bmsState.updatePackStatistics();
     CurrentLimits limits = currentTaperCalculate();
     TEST_ASSERT_EQUAL_INT(0, limits.chargeDa);
     TEST_ASSERT_EQUAL_INT(0, limits.dischargeDa);
 
-    cmu.voltages[CELLS_PER_MODULE - 1] = 3700;
+    cmu.recordRequiredFrame(MSG_TYPE_VOLTS_2, g_mockMillis);
     g_bmsState.updatePackStatistics();
     limits = currentTaperCalculate();
     TEST_ASSERT_EQUAL_INT(200, limits.chargeDa);

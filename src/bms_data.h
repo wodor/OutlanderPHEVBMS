@@ -31,11 +31,20 @@ struct CmuData {
     long voltages[CELLS_PER_MODULE];    // Cell voltages in millivolts (mV)
     long temperatures[TEMPS_PER_MODULE]; // Temperatures (raw value, multiply by 0.001 for °C)
     int  balanceStatus;                  // Bitmask: which cells are balancing (1=balancing)
-    bool present;                        // Have we received data from this CMU?
-    unsigned long lastSeenTime;          // millis() when last message was received
+    bool present;                        // Have we received a required data frame from this CMU?
+    unsigned long lastSeenTime;          // millis() when a required frame was last received
+    bool statusFrameReceived;
+    bool volts1FrameReceived;
+    bool volts2FrameReceived;
+    unsigned long statusFrameTime;
+    unsigned long volts1FrameTime;
+    unsigned long volts2FrameTime;
 
     // Constructor - initializes all values to safe defaults
-    CmuData() : balanceStatus(0), present(false), lastSeenTime(0) {
+    CmuData() : balanceStatus(0), present(false), lastSeenTime(0),
+                statusFrameReceived(false), volts1FrameReceived(false),
+                volts2FrameReceived(false), statusFrameTime(0),
+                volts1FrameTime(0), volts2FrameTime(0) {
         // Zero-initialize arrays
         // memset is a C function that fills memory with a value (here: 0)
         memset(voltages, 0, sizeof(voltages));
@@ -54,6 +63,53 @@ struct CmuData {
             totalMv += voltageMv;
         }
         return totalMv;
+    }
+
+    /**
+     * Record one protocol-required CMU frame. Type 4 is not a health frame:
+     * it must not create presence or extend a safety freshness deadline.
+     */
+    bool recordRequiredFrame(uint8_t messageType, unsigned long now) {
+        switch (messageType) {
+            case MSG_TYPE_STATUS:
+                statusFrameReceived = true;
+                statusFrameTime = now;
+                break;
+            case MSG_TYPE_VOLTS_1:
+                volts1FrameReceived = true;
+                volts1FrameTime = now;
+                break;
+            case MSG_TYPE_VOLTS_2:
+                volts2FrameReceived = true;
+                volts2FrameTime = now;
+                break;
+            default:
+                return false;
+        }
+        present = true;
+        lastSeenTime = now;
+        return true;
+    }
+
+    /** A complete current sample needs status plus both four-cell voltage frames. */
+    bool hasCompleteFreshData(unsigned long now) const {
+        if (!present || !statusFrameReceived || !volts1FrameReceived ||
+            !volts2FrameReceived) {
+            return false;
+        }
+        if (now - statusFrameTime >= CAN_DATA_TIMEOUT_MS ||
+            now - volts1FrameTime >= CAN_DATA_TIMEOUT_MS ||
+            now - volts2FrameTime >= CAN_DATA_TIMEOUT_MS) {
+            return false;
+        }
+        for (int cell = 0; cell < CELLS_PER_MODULE; ++cell) {
+            if (voltages[cell] < 1500 || voltages[cell] > 4500) return false;
+        }
+        for (int sensor = 0; sensor < TEMPS_PER_MODULE; ++sensor) {
+            const float tempC = temperatures[sensor] * 0.001f;
+            if (tempC <= -70.0f || tempC >= 100.0f) return false;
+        }
+        return true;
     }
 };
 
@@ -288,6 +344,20 @@ struct BmsState {
             if (modules[m].present && isModuleSelectedForPack(m)) return true;
         }
         return false;
+    }
+
+    /**
+     * Safety and current-limit gates require an intentionally non-empty
+     * selection and a complete, fresh, valid sample from every selected CMU.
+     */
+    bool selectedCmusHaveCompleteFreshData(unsigned long now) const {
+        bool selectedModuleFound = false;
+        for (int module = 0; module < BMS_MODULE_COUNT; ++module) {
+            if (!isModuleSelectedForPack(module)) continue;
+            selectedModuleFound = true;
+            if (!modules[module].hasCompleteFreshData(now)) return false;
+        }
+        return selectedModuleFound;
     }
 
     /**

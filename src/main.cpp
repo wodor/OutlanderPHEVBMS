@@ -69,10 +69,11 @@ constexpr unsigned long INTERVAL_PROTECTION_CHECK_MS = 500;  // Check protection
 // SETUP
 // =============================================================================
 void setup() {
-    // Assert the sole permissive output before USB enumeration or any network
-    // startup delay. A critical check later takes it low when warranted.
+    // Hold the sole permissive LOW before USB enumeration or any network
+    // startup delay. protectionCheck() alone may raise it after complete CMU
+    // health data is available.
+    digitalWrite(PIN_BATTERY_SAFE_TO_USE, LOW);
     pinMode(PIN_BATTERY_SAFE_TO_USE, OUTPUT);
-    digitalWrite(PIN_BATTERY_SAFE_TO_USE, HIGH);
 
     /**
      * EMBEDDED CONCEPT: Serial Initialization
@@ -103,9 +104,7 @@ void setup() {
     // Load settings from NVS
     settingsLoad();
 
-    // Assert the sole permissive output early. The periodic safety check takes
-    // it low after the 10-second CMU CAN grace period or immediately for high
-    // temperature once data exists.
+    // Keep the permissive low until complete selected-CMU data proves health.
     protectionInit();
 
     // Initialize CAN bus

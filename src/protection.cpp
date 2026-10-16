@@ -16,20 +16,6 @@ bool s_supervisedOverrideActive = false;
 unsigned long s_supervisedOverrideStartedAt = 0;
 constexpr unsigned long SUPERVISED_OVERRIDE_DURATION_MS = 10UL * 60UL * 1000UL;
 
-bool configuredCmusAreFresh(unsigned long now) {
-    for (int cmu = 0; cmu < 10; ++cmu) {
-        if (g_bmsSettings.expectedCmusA & (1U << cmu)) {
-            const CmuData& data = g_bmsState.modules[cmu];
-            if (!data.present || now - data.lastSeenTime >= CAN_DATA_TIMEOUT_MS) return false;
-        }
-        if (g_bmsSettings.expectedCmusB & (1U << cmu)) {
-            const CmuData& data = g_bmsState.modules[cmu + 10];
-            if (!data.present || now - data.lastSeenTime >= CAN_DATA_TIMEOUT_MS) return false;
-        }
-    }
-    return true;
-}
-
 bool supervisedOverrideIsActive(unsigned long now) {
     if (!s_supervisedOverrideActive) return false;
     if (now - s_supervisedOverrideStartedAt >= SUPERVISED_OVERRIDE_DURATION_MS) {
@@ -44,24 +30,24 @@ void protectionInit() {
     s_supervisedOverrideActive = false;
     s_supervisedOverrideStartedAt = 0;
     protectionClearFaults();
+    // Preload LOW before enabling the pin as an output, then retain it until
+    // every selected CMU has a complete, fresh and valid sample.
+    digitalWrite(PIN_BATTERY_SAFE_TO_USE, LOW);
     pinMode(PIN_BATTERY_SAFE_TO_USE, OUTPUT);
-    // Permissive by default. The 10-second CAN timeout below is also the
-    // startup grace period while selected CMUs start reporting.
-    digitalWrite(PIN_BATTERY_SAFE_TO_USE, HIGH);
-    Serial.println("[SAFETY] Battery-safe-to-use output initialized HIGH");
+    Serial.println("[SAFETY] Battery-safe-to-use output initialized LOW pending CMU health");
 }
 
 bool protectionCheck() {
     const unsigned long now = millis();
-    const bool globalCanStale = g_bmsState.lastCanMessageTime == 0 ||
-        now - g_bmsState.lastCanMessageTime >= CAN_DATA_TIMEOUT_MS;
-    const bool selectedCmuMissing = !configuredCmusAreFresh(now);
-    s_commFault = now >= CAN_DATA_TIMEOUT_MS && (globalCanStale || selectedCmuMissing);
+    const bool completeSelectedData = g_bmsState.selectedCmusHaveCompleteFreshData(now);
+    // There is deliberately no startup grace: incomplete, stale or absent
+    // selected-CMU data is a communication fault from the first check.
+    s_commFault = !completeSelectedData;
 
     s_overTempFault = false;
     s_overVoltageFault = false;
     s_underVoltageFault = false;
-    if (g_bmsState.hasAnyData()) {
+    if (completeSelectedData) {
         g_bmsState.updatePackStatistics();
         s_overTempFault = g_bmsState.highestTemp >= g_bmsSettings.overTemp;
         s_overVoltageFault = g_bmsState.highestCellMv >= PROTECTION_OVER_VOLTAGE_MV;
@@ -93,10 +79,8 @@ const char* protectionGetStatus() {
 
 bool protectionEnableSupervisedOverride() {
     const unsigned long now = millis();
-    const bool globalCanFresh = g_bmsState.lastCanMessageTime != 0 &&
-        now - g_bmsState.lastCanMessageTime < CAN_DATA_TIMEOUT_MS;
-    if (!globalCanFresh || !configuredCmusAreFresh(now)) {
-        Serial.println("[SAFETY] Supervised override refused: CMU CAN data is not fresh");
+    if (!g_bmsState.selectedCmusHaveCompleteFreshData(now)) {
+        Serial.println("[SAFETY] Supervised override refused: complete selected-CMU data is not fresh");
         return false;
     }
     if (g_bmsState.hasAnyData()) {

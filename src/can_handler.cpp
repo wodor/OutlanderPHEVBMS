@@ -82,8 +82,10 @@ static void processFrame(uint32_t canId, uint8_t dlc, uint8_t* data, int busInde
         return;
     }
 
-    // Validate message type (1-4 are valid)
-    if (msgType < 1 || msgType > 4) {
+    // Only the three protocol frames that decode temperatures/all eight cell
+    // voltages establish CMU health. Type 4 and malformed frames are not
+    // liveness evidence for protection or current limits.
+    if (msgType < MSG_TYPE_STATUS || msgType > MSG_TYPE_VOLTS_2 || dlc != 8) {
         return;
     }
 
@@ -107,14 +109,12 @@ static void processFrame(uint32_t canId, uint8_t dlc, uint8_t* data, int busInde
     // This is a valid CMU message
     s_canStats.messagesDecoded++;
 
-    // Mark this CMU as present
-    g_bmsState.modules[cmuIndex].present = true;
-    g_bmsState.modules[cmuIndex].lastSeenTime = millis();
-    if (expected) {
-        g_bmsState.lastCanMessageTime = millis();
-    }
-
     CmuData& cmu = g_bmsState.modules[cmuIndex];
+    const unsigned long now = millis();
+    if (!cmu.recordRequiredFrame(msgType, now)) return;
+    if (expected) {
+        g_bmsState.lastCanMessageTime = now;
+    }
 
     switch (msgType) {
         case MSG_TYPE_STATUS:  // Balance status + temperatures

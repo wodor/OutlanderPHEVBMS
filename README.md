@@ -11,21 +11,21 @@ The firmware reads CMU CAN data, controls balancing, publishes MQTT telemetry,
 and drives GPIO15 `BATTERY_SAFE_TO_USE` as an active-HIGH permissive. The
 external breaker interface must open when this output goes LOW.
 
-**Startup is permissive:** `protectionInit()` drives GPIO15 HIGH immediately.
-Communication faults are suppressed until ten seconds of uptime, even when
-no selected CMU data has arrived. After that grace period, missing global
-selected-CMU traffic or a selected module stale/missing for ten seconds drives
-LOW. High temperature, a cell at or above 4.20 V, or a cell at or below 2.80 V
-also drives LOW when the available data reports that condition. Temperature
-and communication faults cannot be overridden; the bounded supervised
-voltage-recovery override affects only emergency voltage trips.
+**Startup is fail-low in application software:** `setup()` and
+`protectionInit()` drive GPIO15 LOW. `protectionCheck()` can raise it only
+after every selected CMU has a complete, fresh and valid sample: one status /
+three-temperature frame and both four-cell voltage frames. There is no
+startup grace period. Missing, partial, malformed or stale required data is a
+communication fault from the first protection check. This does not prove the
+ESP32 reset, bootloader or unpowered-pin electrical state; those still need
+measured commissioning evidence.
 
-Freshness is currently tracked per module, not per decoded field group. Any
-accepted CMU type 1–4 refreshes that module's timestamp; type 4 updates no
-voltage or temperature fields. Continued traffic can therefore leave a frozen
-voltage or temperature group looking fresh. HIGH is the firmware's permissive
-state, not proof that every required field is fresh or that the external
-breaker chain has passed a physical fault test.
+Freshness is per required frame group. Type 1 (status/temperatures), type 2
+(cells 1–4) and type 3 (cells 5–8) each have their own timestamp; type 4 and
+malformed frames are not liveness evidence. HIGH is the firmware's permissive
+state, not proof that the external breaker chain has passed a physical fault
+test. Temperature and communication faults cannot be overridden; the bounded
+supervised voltage-recovery override affects only emergency voltage trips.
 
 This firmware does not read amperage or perform coulomb counting. It calculates
 cell-voltage-derived charge/discharge current ceilings for PowerWall-Gateway,
@@ -69,7 +69,7 @@ Balancing-cell count MQTT telemetry is deliberately published at a 10-second int
 - **Cell Balancing Control**: Uses the eighth-lowest valid cell voltage, preserving the lowest seven cells from discharge
 - **Web Dashboard**: Real-time monitoring via WiFi
 - **Serial/Web Command Parity**: Every serial command is available through `POST /api/command`; `GET /api/help` returns the mapping
-- **Physical permissive**: GPIO15 `BATTERY_SAFE_TO_USE`, with the startup grace and module-freshness limitations described above
+- **Physical permissive**: GPIO15 `BATTERY_SAFE_TO_USE`, held LOW in application startup until complete selected-CMU health data is present
 - **Temperature telemetry**: Per-CMU and overall maximum temperature MQTT topics
 - **CAN diagnostics**: MCP2515/TWAI status, error counters, and message counters in serial and web output
 
@@ -251,8 +251,8 @@ taper below that reference.
 ## Status
 
 ✅ **Working**: CAN communication, voltage/temp reading, MQTT telemetry, web dashboard, serial interface, and web command bridge
-✅ **Local verification**: 46/46 native tests and the ESP32-S3 OTA environment build passed on 16 October 2026
-⚠️ **Supervised**: GPIO15 safety permissive is deployed; physical breaker-trip cases still require end-to-end testing
+✅ **Local verification**: 50/50 native tests and the ESP32-S3 build passed for the M01 source candidate on 16 October 2026
+⚠️ **Supervised**: GPIO15 application behavior needs end-to-end breaker-trip testing; reset/power-loss behavior is not established
 ⚠️ **Deployment provenance**: API readback confirms highest-cell gauge behavior; the installed binary is not proven byte-for-byte from this checkout
 ⚠️ **Repository metadata**: The GitHub repository is public and still marked as a fork of `Tom-evnut/OutlanderPHEVBMS`, although the local upstream remote and inherited firmware were removed
 ❌ **Intentionally absent**: amperage input, coulomb counting, ESS contactor control, and inverter-side SIMPBMS transmitter
@@ -260,7 +260,7 @@ taper below that reference.
 ## Remaining work
 
 1. Physically prove GPIO15 LOW through the installed SSR/GEYA/V9 breaker chain for every fault and power-loss case.
-2. Address permissive startup and per-field freshness gaps with host tests, then verify loss-of-either-bus and frozen frame-group behavior with all 10 selected modules.
+2. Verify loss-of-either-bus, malformed-frame and frozen frame-group behavior with all selected modules, then record GPIO15 and breaker-chain observations.
 3. Implement and bench-test the framed serial sender after the T-CAN485 receiver contract is ready.
 4. Record the exact source commit and firmware hash at the next OTA deployment.
 

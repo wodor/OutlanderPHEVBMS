@@ -66,17 +66,7 @@ CurrentLimits currentTaperCalculate(long highestCellMv, long lowestCellMv,
 
 CurrentLimits currentTaperCalculate() {
     const unsigned long now = millis();
-    bool selectedModuleFound = false;
-    for (int module = 0; module < BMS_MODULE_COUNT; ++module) {
-        if (!isModuleSelectedForPack(module)) continue;
-        selectedModuleFound = true;
-        const CmuData& cmu = g_bmsState.modules[module];
-        if (!cmu.present || now - cmu.lastSeenTime >= CAN_DATA_TIMEOUT_MS) return {0, 0};
-        for (int cell = 0; cell < CELLS_PER_MODULE; ++cell) {
-            if (cmu.voltages[cell] < 1500 || cmu.voltages[cell] > 4500) return {0, 0};
-        }
-    }
-    if (!selectedModuleFound) return {0, 0};
+    if (!g_bmsState.selectedCmusHaveCompleteFreshData(now)) return {0, 0};
     return currentTaperCalculate(g_bmsState.highestCellMv, g_bmsState.lowestCellMv,
                                  g_bmsSettings);
 }
