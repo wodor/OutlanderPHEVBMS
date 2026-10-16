@@ -5,50 +5,57 @@ It reads cell voltages and temperatures from Mitsubishi Outlander PHEV battery
 modules over CAN and provides monitoring, balancing, MQTT telemetry, and a
 physical safety permissive for DIY home energy storage.
 
-## Current runtime contract (verified 16 October 2026)
+## Current runtime contract (reviewed 16 October 2026)
 
-The current firmware is a standalone CMU monitoring/safety controller. It reads CMU CAN data, controls balancing, publishes MQTT telemetry, and drives one physical permissive: GPIO15 `BATTERY_SAFE_TO_USE` (active HIGH). GPIO15 goes LOW for high temperature, no CAN data for 10 seconds, a selected CMU missing for 10 seconds, any cell at or above 4.20 V, or any cell at or below 2.80 V. Temperature and communication trips cannot be overridden. The external breaker interface must open when this normally-HIGH permissive goes LOW.
+The firmware reads CMU CAN data, controls balancing, publishes MQTT telemetry,
+and drives GPIO15 `BATTERY_SAFE_TO_USE` as an active-HIGH permissive. The
+external breaker interface must open when this output goes LOW.
+
+**Startup is permissive:** `protectionInit()` drives GPIO15 HIGH immediately.
+Communication faults are suppressed until ten seconds of uptime, even when
+no selected CMU data has arrived. After that grace period, missing global
+selected-CMU traffic or a selected module stale/missing for ten seconds drives
+LOW. High temperature, a cell at or above 4.20 V, or a cell at or below 2.80 V
+also drives LOW when the available data reports that condition. Temperature
+and communication faults cannot be overridden; the bounded supervised
+voltage-recovery override affects only emergency voltage trips.
+
+Freshness is currently tracked per module, not per decoded field group. Any
+accepted CMU type 1–4 refreshes that module's timestamp; type 4 updates no
+voltage or temperature fields. Continued traffic can therefore leave a frozen
+voltage or temperature group looking fresh. HIGH is the firmware's permissive
+state, not proof that every required field is fresh or that the external
+breaker chain has passed a physical fault test.
 
 This firmware does not read amperage or perform coulomb counting. It calculates
 cell-voltage-derived charge/discharge current ceilings for PowerWall-Gateway,
 but does not control inverter work modes, run ESS contactor sequencing, or emit
 inverter-side SIMPBMS/FoxESS frames. It has no Battery-Emulator application
 dependency. MQTT is its current external interface. A future dedicated framed
-serial sender will feed the standalone gateway; it is not implemented yet. SOC
-is voltage-derived telemetry/fallback data. The live device is at
-`http://192.168.2.99/` (13 October 2026).
+serial sender is not implemented. SOC here is voltage-derived diagnostic
+telemetry. FoxGW uses its separate calibrated energy ledger for operational
+SOC and does not fall back to this voltage gauge if that ledger is unavailable.
+The currently identified BMS is at `http://192.168.2.99/`; verify identity
+before device operations.
 
-### 13 October 2026: highest-cell voltage SOC
+### Current highest-cell voltage gauge
 
-The BMS voltage gauge now uses the highest selected cell. Its 100% reference is
-4.200 V; rounding and the median filter cannot show 100% below the live threshold.
-Reaching the threshold is displayed immediately, and falling below it clears
-100% immediately. Below full, the existing median/upward-slew filter remains.
-This is a voltage gauge, **not measured stored-energy SOC**. FoxGW sends its
-separate energy-counted operational SOC to the inverter.
+The gauge uses the highest selected cell and the configured piecewise curve.
+Its live full reference is 4.200 V: reaching that threshold displays 100%
+immediately, and falling below it clears 100% immediately. Below full, the
+15-second median and upward-slew filter remain. This gauge does not measure
+stored energy or establish usable capacity.
 
-The live curve's last point is changed from `4100:100` to `4200:100`, retaining
-all lower points. For 80 selected cells this advertises a 336.0 V design maximum
-(minimum unchanged at 256.0 V). The design maximum is not a charging target.
-The existing normal taper is unchanged: charge full/reduced/stop at
-4.050/4.140/4.150 V, with 13/2 A full/reduced current at deployment preflight.
-Consequently normal taper can stop charging before this gauge reaches 100%.
+With 80 selected cells, the 3.20/4.20-V design endpoints advertise 256/336 V.
+The normal charge taper stops at 4.150 V, so charging can stop before this
+gauge reaches 100%. Emergency protection independently trips at >=4200 mV.
+A 1-mV display increment is not proof of 1-mV measurement accuracy.
+The current masks select ten CMUs across both buses; an additional observed,
+unselected module is excluded from pack statistics and protection.
 
-GPIO15 still trips at **>=4200 mV**, not 4201 mV, following the user's final
-clarification. Low voltage, temperature, communications protection, and the
-existing supervised-override mechanism are unchanged. A 1 mV display increment
-must not be interpreted as proof of 1 mV absolute measurement accuracy.
-See [deployment record](docs/2026-10-13-highest-cell-soc.md).
-
-The 16 October 02:53 BST `/api/summary` readback reported 10 expected CMUs
-(11 physically observed, including an unselected module), a
-highest selected cell of 3976 mV, a lowest of 3970 mV, BMS voltage SOC 74%,
-`socVoltageSource=highest_cell`, a 4200 mV full reference and 4200 mV
-overvoltage trip. Protection was `OK`, CAN data was fresh (4 ms), GPIO15
-reported HIGH, and no supervised override was active. The saved curve ends at `4200:100`; the charge taper is
-4.050/4.140/4.150 V at 13/2 A and the discharge taper is
-3.600/3.500/3.300 V at 11/1 A. This API readback does not prove the exact
-installed binary or physical breaker operation.
+Dated deployment, readback and rollback evidence is retained in the
+[historical SOC record](historical/2026-10-13-highest-cell-soc.md). It does not
+prove that the installed binary matches this checkout byte-for-byte.
 
 Balancing-cell count MQTT telemetry is deliberately published at a 10-second interval. Per-CMU maximum temperature topics and the overall pack maximum temperature topic are published with the other BMS telemetry.
 
@@ -62,7 +69,7 @@ Balancing-cell count MQTT telemetry is deliberately published at a 10-second int
 - **Cell Balancing Control**: Uses the eighth-lowest valid cell voltage, preserving the lowest seven cells from discharge
 - **Web Dashboard**: Real-time monitoring via WiFi
 - **Serial/Web Command Parity**: Every serial command is available through `POST /api/command`; `GET /api/help` returns the mapping
-- **Fail-safe physical output**: GPIO15 `BATTERY_SAFE_TO_USE`, active HIGH only while the BMS is safe
+- **Physical permissive**: GPIO15 `BATTERY_SAFE_TO_USE`, with the startup grace and module-freshness limitations described above
 - **Temperature telemetry**: Per-CMU and overall maximum temperature MQTT topics
 - **CAN diagnostics**: MCP2515/TWAI status, error counters, and message counters in serial and web output
 
@@ -209,7 +216,7 @@ turns them into the FoxESS CAN current ceilings.
 On startup, the firmware migrates the historical 4.00 V voltage-SOC endpoint
 to 4.05 V. An existing 4.05 V endpoint remains unchanged. The 4.20 V emergency
 cell-voltage stop remains a separate absolute safety ceiling and is never a
-normal charging target. The 13 October live configuration uses 4.20 V as its
+normal charging target. The current persisted configuration uses 4.20 V as its
 SOC/design reference only; normal charging is still stopped by the independent
 taper below that reference.
 
@@ -246,21 +253,22 @@ taper below that reference.
 ✅ **Working**: CAN communication, voltage/temp reading, MQTT telemetry, web dashboard, serial interface, and web command bridge
 ✅ **Local verification**: 46/46 native tests and the ESP32-S3 OTA environment build passed on 16 October 2026
 ⚠️ **Supervised**: GPIO15 safety permissive is deployed; physical breaker-trip cases still require end-to-end testing
-⚠️ **Deployment provenance**: the highest-cell gauge was verified after the 13 October OTA and remains visible in the 16 October live API; the installed binary is not proven byte-for-byte from this checkout
+⚠️ **Deployment provenance**: API readback confirms highest-cell gauge behavior; the installed binary is not proven byte-for-byte from this checkout
 ⚠️ **Repository metadata**: The GitHub repository is public and still marked as a fork of `Tom-evnut/OutlanderPHEVBMS`, although the local upstream remote and inherited firmware were removed
 ❌ **Intentionally absent**: amperage input, coulomb counting, ESS contactor control, and inverter-side SIMPBMS transmitter
 
 ## Remaining work
 
 1. Physically prove GPIO15 LOW through the installed SSR/GEYA/V9 breaker chain for every fault and power-loss case.
-2. Verify loss-of-either-bus behavior with all 10 selected modules.
+2. Address permissive startup and per-field freshness gaps with host tests, then verify loss-of-either-bus and frozen frame-group behavior with all 10 selected modules.
 3. Implement and bench-test the framed serial sender after the T-CAN485 receiver contract is ready.
 4. Record the exact source commit and firmware hash at the next OTA deployment.
 
 ## More Information
 
 - See `AGENTS.md` for detailed development notes, hardware specifications, and CAN protocol documentation.
-- See `docs/REMOTE_LOGGING_PLAN.md` for the remote logging plan.
+- See [test coverage](test/README.md) for what host tests establish.
+- See [historical evidence and proposals](historical/README.md) for dated deployment records and the unimplemented remote logging design.
 
 ## Hardware
 

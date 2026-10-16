@@ -18,11 +18,19 @@ installed wiring before using any pin to diagnose or change hardware.
 
 GPIO15 is the **only physical control output** in this firmware. HIGH permits
 the external breaker chain to remain closed; LOW must cause the external chain
-to open. The firmware drives it LOW on its configured critical CMU, CAN,
-temperature, or emergency voltage fault. This signal is not a main contactor
-drive or an ESS sequencing output. The observed API state on 16 October 2026
-was `batterySafeToUse: true` with protection `OK`; that readback does not prove
-the downstream SSR/GEYA/V9 breaker chain physically opened in a fault test.
+to open. `protectionInit()` drives it HIGH immediately; communication faults are
+suppressed until ten seconds of uptime, even with no CMU data. After this
+grace period, missing/stale selected-module traffic drives LOW. Detected
+critical temperature and emergency voltage faults also drive LOW, subject to
+the bounded voltage-only recovery override.
+
+Each accepted CMU type 1–4 refreshes one module timestamp; voltage and
+temperature groups have no independent freshness checks, and type 4 updates
+neither group. This output must not be described as LOW until complete fresh
+data arrives, or as proof that every field is fresh. This signal is not a main
+contactor drive or an ESS sequencing output. An API
+`batterySafeToUse: true`/`OK` readback does not prove the downstream SSR/GEYA/V9
+breaker chain physically opens in a fault or power-loss test.
 
 The MCP2515 oscillator setting defaults to 16 MHz and is selectable with
 `CAN_CRYSTAL_MHZ`. The physical oscillator must be checked against the actual

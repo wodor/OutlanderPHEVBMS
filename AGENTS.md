@@ -118,8 +118,13 @@ Tests cover:
 - BMS data structures and calculations
 - voltage-derived SOC calculation
 - persisted configuration validation
-- GPIO15 protection/fail-low behavior
+- GPIO15 HIGH initialization, timeout/fault logic, and bounded override with mocked outputs
 - pack statistics and safety-critical boundaries
+
+The native build excludes CAN handler, main loop, MQTT and web runtime.
+Injected module timestamps do not test per-field CAN freshness or the actual
+GPIO15/breaker chain. Do not describe this suite as full CAN-path or physical
+fail-low validation.
 
 ### CI/CD Configuration
 
@@ -219,10 +224,24 @@ T-CAN485 receiver pins and protocol are finalized.
 ## Current Protection Contract
 
 - GPIO15 is active HIGH: HIGH means safe-to-use, LOW must trip the external breaker chain.
-- It drops LOW for high temperature, no global CMU CAN for 10 seconds, a selected CMU stale/missing for 10 seconds, cell voltage `>= 4200 mV`, or cell voltage `<= 2800 mV`.
+- `protectionInit()` initializes GPIO15 HIGH. Communication faults are suppressed
+  until ten seconds of uptime, even without any selected CMU data. After that,
+  no global selected-CMU traffic for ten seconds or a selected module
+  stale/missing for ten seconds drives LOW. Detected high temperature or cell
+  voltage `>= 4200 mV` / `<= 2800 mV` also drives LOW, subject to the existing
+  voltage-only override.
+- Freshness is module-wide: accepted CMU types 1–4 refresh the timestamp,
+  although type 4 updates no voltage/temperature field. Frozen status or
+  voltage groups can therefore appear fresh. Do not claim complete-data
+  gating or a fail-low boot contract that the code does not implement.
 - Temperature and communication faults cannot be overridden.
 - The supervised override can suppress only the emergency voltage trip and requires fresh CMU data plus safe temperature.
-- As of 13 October 2026, the live highest-cell SOC/design reference is 4.20 V (336 V for 80 cells), with 3.20 V minimum. This is not a normal charge target: the independently configured taper stops charging earlier. GPIO15 still trips at >=4200 mV; the illustrative 4201 mV request was withdrawn. SOC must not display 100% below a live highest cell of 4200 mV. FoxGW's selected energy-counted inverter SOC is separate. See docs/2026-10-13-highest-cell-soc.md.
+- The current highest-cell SOC/design reference is 4.20 V (336 V for 80 cells),
+  with a 3.20 V minimum. Normal charge taper stops earlier; GPIO15 still trips
+  at >=4200 mV. The gauge must not show 100% below a live highest cell of
+  4200 mV. It is diagnostic voltage telemetry; FoxGW's calibrated energy
+  ledger is authoritative and has no voltage-SOC fallback. Dated deployment
+  evidence is in `historical/2026-10-13-highest-cell-soc.md`.
 - Normal current ceilings use the highest selected cell for charge and lowest
   selected cell for discharge. They are persisted in NVS, atomically editable
   through `POST /api/config` as `currentTaper`, and published as an atomic MQTT
@@ -231,9 +250,9 @@ T-CAN485 receiver pins and protocol are finalized.
 ## Current State and Remaining Work
 
 - 46 native tests and the ESP32-S3 OTA environment build passed locally on 16 October 2026.
-- The highest-cell gauge was verified after the 13 October OTA and remains visible in the 16 October live API; the exact installed binary is not proven byte-for-byte from this checkout. Record the source commit and image hash on the next deployment.
+- The current API exposes the highest-cell gauge; the exact installed binary is not proven byte-for-byte from this checkout. Record the source commit and image hash on the next deployment.
 - Physically prove GPIO15 LOW through the SSR/GEYA/V9 breaker chain for every fault and power-loss case.
-- Prove loss-of-either-bus behavior with all 10 selected modules.
+- Address startup and per-field freshness gaps with reproducing tests; prove loss-of-either-bus and frozen status/voltage-group behavior with all 10 selected modules.
 - Implement the framed serial sender only after the PowerWall-Gateway receiver contract is fixed.
 - GitHub still labels this project as a fork even though its local upstream remote and inherited firmware have been removed.
 
