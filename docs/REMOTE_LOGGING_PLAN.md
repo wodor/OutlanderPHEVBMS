@@ -4,6 +4,12 @@
 
 This document outlines a comprehensive plan for implementing a robust, standards-based remote logging system for the Outlander PHEV Battery Management System (BMS). The solution will enable near-realtime monitoring of battery cell data while maintaining long-term storage of critical events, with resilience to network interruptions.
 
+This is a proposal, not a description of the deployed logger or MQTT schema.
+The current BMS measures cell voltage and temperature, reports a voltage-based
+SOC gauge and calculated charge/discharge current limits, and exposes a GPIO15
+safety permissive. It does not measure pack current or power and does not
+perform coulomb counting. The examples below use only those available signals.
+
 **Target Architecture:**
 - **BMS Device**: ESP32-S3 (T-2Can board) with WiFi
 - **Log Aggregator**: Raspberry Pi 3 on local network
@@ -33,8 +39,8 @@ This document outlines a comprehensive plan for implementing a robust, standards
 ### Functional Requirements
 
 1. **Real-time Cell Monitoring**
-   - Near real-time logging of individual cell voltages (64 cells)
-   - Temperature data from all modules (24 temperature sensors)
+   - Near real-time logging of selected cell voltages (80 cells in the current 10-CMU configuration)
+   - Temperature data from selected modules (30 sensors in the current configuration)
    - Short retention period (hours to days)
 
 2. **Critical Event Logging**
@@ -143,7 +149,7 @@ MQTT (Message Queuing Telemetry Transport) is the industry standard for IoT logg
 ```json
 {"ts":1706000000,"level":"INFO","module":"cell","cmu":1,"cell":3,"voltage_mv":4050,"tag":"cell_voltage"}
 {"ts":1706000000,"level":"WARN","module":"protection","event":"overvoltage","cell_id":"1-3","voltage_mv":4210,"tag":"alert"}
-{"ts":1706000000,"level":"INFO","module":"soc","soc_pct":87.5,"current_a":-15.2,"tag":"state"}
+{"ts":1706000000,"level":"INFO","module":"soc","soc_pct":87,"highest_cell_mv":3965,"tag":"state"}
 ```
 
 **Schema Fields:**
@@ -261,12 +267,12 @@ MQTT (Message Queuing Telemetry Transport) is the industry standard for IoT logg
 ### Data Rates and Volume Estimates
 
 **Assumptions:**
-- 64 cells × 8 bytes/sample = 512 bytes per cell voltage snapshot
-- 24 temps × 8 bytes/sample = 192 bytes per temperature snapshot
+- 80 selected cells × 8 bytes/sample = 640 bytes per cell voltage snapshot
+- 30 selected temperatures × 8 bytes/sample = 240 bytes per temperature snapshot
 - JSON overhead ~30%
 - Update rates:
   - Cell data: 1-10 Hz
-  - SOC/current: 1 Hz
+  - Voltage SOC/current limits: 1 Hz
   - Heartbeat: 0.1 Hz (every 10s)
 
 **Bandwidth Calculations:**
@@ -275,7 +281,7 @@ MQTT (Message Queuing Telemetry Transport) is the industry standard for IoT logg
 |-----------|------|----------|-----------|
 | Cell voltages (all) | 1 Hz | 1.5 KB | 1.5 KB/s = 130 MB/day |
 | Cell voltages (all) | 0.1 Hz | 1.5 KB | 150 B/s = 13 MB/day |
-| SOC/Current/Pack | 1 Hz | 200 B | 200 B/s = 17 MB/day |
+| Voltage SOC/current limits/pack voltage | 1 Hz | 200 B | 200 B/s = 17 MB/day |
 | Temperatures | 1 Hz | 800 B | 800 B/s = 69 MB/day |
 | Heartbeat | 0.1 Hz | 100 B | 10 B/s = 0.8 MB/day |
 
@@ -926,12 +932,12 @@ LogEntry buffer[384];  // 384 entries × 134 bytes = ~51 KB
 
 2. **Batching** (recommended)
    - Group multiple cell readings into single MQTT message
-   - Example: Send all 64 cells in one message instead of 64 messages
+   - Example: Send all 80 selected cells in one message instead of 80 messages
    ```json
    {
      "ts": 1706000000,
      "tag": "cell_snapshot",
-     "cells": [4050, 4051, 4052, ..., 4049]  // All 64 cells
+     "cells": [4050, 4051, 4052, ..., 4049]  // All 80 selected cells
    }
    ```
 
@@ -1081,14 +1087,14 @@ bms/
 │   ├── info                 # Info messages (QoS 1)
 │   └── debug                # Debug messages (QoS 0)
 ├── cell/
-│   ├── voltage/snapshot     # All 64 cells (QoS 0)
+│   ├── voltage/snapshot     # All 80 selected cells (QoS 0)
 │   ├── voltage/1            # Individual cell (rarely used)
-│   └── temperature/snapshot # All 24 temps (QoS 0)
+│   └── temperature/snapshot # All 30 selected temperatures (QoS 0)
 ├── pack/
 │   ├── soc                  # State of charge (QoS 1)
 │   ├── voltage              # Pack voltage (QoS 1)
-│   ├── current              # Pack current (QoS 1)
-│   └── power                # Pack power (QoS 1)
+│   ├── charge_current_limit # Calculated ceiling (QoS 1)
+│   └── discharge_current_limit # Calculated ceiling (QoS 1)
 ├── protection/
 │   ├── alert                # Protection alerts (QoS 2)
 │   └── status               # Protection system status (QoS 1)
@@ -1119,8 +1125,8 @@ bms/
   "type": "heartbeat",
   "device_id": "bms-outlander-01",
   "soc": 87.5,
-  "pack_v": 49.8,
-  "current_a": -15.2,
+  "pack_v": 320.0,
+  "highest_cell_mv": 3965,
   "uptime_s": 345678,
   "free_heap": 245678,
   "wifi_rssi": -65,
@@ -1157,7 +1163,7 @@ bms/
   "cell_id": "3-2",
   "voltage_mv": 4210,
   "threshold_mv": 4200,
-  "action": "charge_disabled"
+  "action": "battery_safe_to_use_low"
 }
 ```
 
@@ -1168,10 +1174,10 @@ bms/
   "level": "INFO",
   "tag": "state",
   "module": "soc",
-  "soc_pct": 87.5,
-  "soc_change": -0.5,
-  "current_a": -15.2,
-  "method": "coulomb_counting"
+  "soc_pct": 87,
+  "soc_change": -1,
+  "highest_cell_mv": 3965,
+  "method": "highest_cell_voltage_curve"
 }
 ```
 

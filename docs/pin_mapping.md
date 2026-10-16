@@ -1,83 +1,34 @@
-# Pin Mapping (T-2Can Header)
+# Current T-2Can firmware pin mapping
 
-This document records the GPIO assignments used by the PlatformIO port and how the
-silkscreened header labels map to the ESP32-S3 IOxx numbers used in code.
+This is the GPIO assignment compiled from `src/config.h` for the standalone
+Outlander CMU monitor. It describes firmware signals, not a verified physical
+header or control-box wiring diagram. Confirm the board schematic and trace the
+installed wiring before using any pin to diagnose or change hardware.
 
-## Variant Used by This Project
+| Function | ESP32-S3 GPIO | Direction | Source/role |
+| --- | ---: | --- | --- |
+| MCP2515 CAN-A chip select | 10 | Output | SPI controller select |
+| MCP2515 CAN-A clock | 12 | Output | SPI SCLK |
+| MCP2515 CAN-A MOSI | 11 | Output | SPI MOSI |
+| MCP2515 CAN-A MISO | 13 | Input | SPI MISO |
+| MCP2515 CAN-A reset | 9 | Output | Reset pulse |
+| TWAI CAN-B TX | 7 | Output | Built-in CAN controller |
+| TWAI CAN-B RX | 6 | Input | Built-in CAN controller |
+| `BATTERY_SAFE_TO_USE` | 15 | Output | Active HIGH safety permissive |
 
-PlatformIO uses the custom board definition `esp32s3_flash_16MB`, which sets:
+GPIO15 is the **only physical control output** in this firmware. HIGH permits
+the external breaker chain to remain closed; LOW must cause the external chain
+to open. The firmware drives it LOW on its configured critical CMU, CAN,
+temperature, or emergency voltage fault. This signal is not a main contactor
+drive or an ESS sequencing output. The observed API state on 16 October 2026
+was `batterySafeToUse: true` with protection `OK`; that readback does not prove
+the downstream SSR/GEYA/V9 breaker chain physically opened in a fault test.
 
-- `variant = esp32s3`
+The MCP2515 oscillator setting defaults to 16 MHz and is selectable with
+`CAN_CRYSTAL_MHZ`. The physical oscillator must be checked against the actual
+board before changing that setting or diagnosing CAN-A timing.
 
-That means the active Arduino pin map comes from:
-
-- `.pio-core/packages/framework-arduinoespressif32/variants/esp32s3/pins_arduino.h`
-
-This variant does not define `D4`, `D5`, etc. The code in this repo uses raw GPIO
-numbers (e.g. `4`, `5`, `15`, `16`, `39`) which matches the `esp32s3` variant.
-
-## Board Label Mapping
-
-The board silkscreen uses numeric labels that correspond 1:1 to the GPIO number.
-This document and the code use `IOxx` notation.
-
-IO numbers used by this project:
-- `IO4`
-- `IO5`
-- `IO15`
-- `IO16`
-- `IO17`
-- `IO18`
-- `IO21`
-- `IO39`
-- `IO41`
-- `IO42`
-
-## ESS Control I/O (implemented)
-
-Inputs (active HIGH):
-- AC presence: `IO39`
-- Key/Enable: `IO41`
-- AUX input (optional): `IO42`
-
-Outputs (active HIGH):
-- Main contactor: `IO15`
-- Precharge: `IO16`
-- Negative contactor: `IO17`
-- Charger enable: `IO18`
-- Discharge enable (optional): `IO21`
-
-## Current Sensing (analog)
-
-Analog inputs:
-- Low-range sensor: `IO4`
-- High-range sensor: `IO5`
-
-These pins are configured in `src/config.h` as:
-- `PIN_CURRENT_SENSE_LOW`
-- `PIN_CURRENT_SENSE_HIGH`
-
-## Back-of-Board Header Wiring (ASCII Guide)
-
-Back view, header pins as printed, USB at bottom. Only used pins are labeled
-with signal names; others are shown as `NC` (not connected).
-
-```
-Left column (top)                     Right column (top)
-┌───────────────────────────────┐    ┌───────────────────────────────┐
-│ 3V3            [3V3]          │    │ GND            [GND]          │
-│ 5V             [5V]           │    │ GND            [GND]          │
-│ IO35           [NC]           │    │ IO39           [IN:AC_PRESENT]│
-│ IO38           [NC]           │    │ IO42           [IN:AUX_IN]    │
-│ IO37           [NC]           │    │ IO41           [IN:KEY_ON]    │
-│ IO36           [NC]           │    │ IO40           [NC]           │
-│ IO16           [OUT:PRECHG]   │    │ IO4            [IN:CUR_LOW]   │
-│ IO15           [OUT:MAIN]     │    │ IO5            [IN:CUR_HIGH]  │
-│ IO45           [NC]           │    │ IO48           [NC]           │
-│ IO47           [NC]           │    │ IO21           [OUT:DISCHG_EN]│
-│ IO14           [NC]           │    │ IO17           [OUT:NEG_CONT] │
-│ IO18           [OUT:CHG_EN]   │    │ GND            [GND]          │
-│ IO46           [NC]           │    │ IO3            [NC]           │
-└───────────────────────────────┘    └───────────────────────────────┘
-Left column (bottom)                  Right column (bottom)
-```
+The current source has no pack-current sensor inputs, coulomb counter, AC/key
+inputs, or ESS contactor/precharge/charger-enable pin assignments. The board's
+silkscreen-to-header positions and external control-box wiring are not
+verified by this software map.

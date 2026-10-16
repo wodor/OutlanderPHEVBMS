@@ -14,7 +14,10 @@ This is the standalone Outlander PHEV CMU monitor for the LilyGO T-2Can board
 - **Two CAN interfaces:**
   - **CAN-A:** External MCP2515 controller via SPI
   - **CAN-B:** ESP32's built-in TWAI controller
-- Both buses are implemented. The live eight-CMU configuration currently selects Bus B; the final conflicting-ID split is expected to use both buses.
+- Both buses are implemented. The 16 October live settings select 10 CMUs
+  across Bus A (`0x090`) and Bus B (`0x3DB`); the API also observed one
+  unselected module. Loss-of-either-bus behavior remains to be physically
+  verified.
 - **USB:** Native USB CDC for serial communication
 - **Serial port:** `/dev/cu.usbmodem2101` (may vary)
 
@@ -35,8 +38,8 @@ Built-in TWAI (CAN-B):
 ### MCP2515 Notes
 - Crystal frequency must match the physical board; it is compile-time selectable
   with `CAN_CRYSTAL_MHZ` and the current source default is 16 MHz.
-- Do not infer the oscillator from old handoff notes. Verify it before using
-  CAN-A; the live eight-CMU installation currently uses TWAI Bus B.
+- Do not infer the oscillator from old handoff notes. Verify the physical
+  MCP2515 oscillator before changing CAN-A timing.
 - Requires reset sequence: HIGH → LOW → HIGH with delays
 
 ## Outlander BMS CAN Protocol
@@ -148,10 +151,9 @@ Tests cover:
 
 **Note for Copilot Agents**: The `copilot-setup-steps.yml` workflow runs automatically before you start working, ensuring PlatformIO and all dependencies are pre-installed and cached. This prevents firewall/network issues when you need to run PlatformIO commands, as everything is already available locally. The CI workflow provides the same setup for automated testing.
 
-**Current CI caveat (20 August 2026):** local native tests passed 27/27, but
-the latest GitHub `main` workflow is red because `test/mocks/Arduino.h` defines
-a `min` macro that collides with the Ubuntu/GCC standard library. Do not report
-CI green until that mock is fixed and a new workflow succeeds.
+The 16 October 2026 local native suite passed 46/46 tests. Check the latest
+GitHub workflow separately before reporting CI status; local tests alone do
+not establish a green remote run.
 
 ### Build Commands
 ```bash
@@ -220,7 +222,7 @@ T-CAN485 receiver pins and protocol are finalized.
 - It drops LOW for high temperature, no global CMU CAN for 10 seconds, a selected CMU stale/missing for 10 seconds, cell voltage `>= 4200 mV`, or cell voltage `<= 2800 mV`.
 - Temperature and communication faults cannot be overridden.
 - The supervised override can suppress only the emergency voltage trip and requires fresh CMU data plus safe temperature.
-- The configured 4.05/3.20 V SOC endpoints are telemetry/design values, not the 4.20/2.80 V emergency thresholds. Historical 4.00 V and 4.05 V high endpoints migrate to 4.05 V and 4.10 V respectively; 4.20 V is never a normal target.
+- As of 13 October 2026, the live highest-cell SOC/design reference is 4.20 V (336 V for 80 cells), with 3.20 V minimum. This is not a normal charge target: the independently configured taper stops charging earlier. GPIO15 still trips at >=4200 mV; the illustrative 4201 mV request was withdrawn. SOC must not display 100% below a live highest cell of 4200 mV. FoxGW's selected energy-counted inverter SOC is separate. See docs/2026-10-13-highest-cell-soc.md.
 - Normal current ceilings use the highest selected cell for charge and lowest
   selected cell for discharge. They are persisted in NVS, atomically editable
   through `POST /api/config` as `currentTaper`, and published as an atomic MQTT
@@ -228,12 +230,10 @@ T-CAN485 receiver pins and protocol are finalized.
 
 ## Current State and Remaining Work
 
-- `main` matched `origin/main` at the 20 August 2026 audit.
-- Local native tests previously passed 27/27 and the ESP32-S3 build passed.
-- The cleanup/flattening commits have not been OTA-proven; record the exact commit and image hash on the next deployment.
-- Fix the GitHub native CI macro collision and obtain a green run.
+- 46 native tests and the ESP32-S3 OTA environment build passed locally on 16 October 2026.
+- The highest-cell gauge was verified after the 13 October OTA and remains visible in the 16 October live API; the exact installed binary is not proven byte-for-byte from this checkout. Record the source commit and image hash on the next deployment.
 - Physically prove GPIO15 LOW through the SSR/GEYA/V9 breaker chain for every fault and power-loss case.
-- Wire/configure the second CMU bus and prove loss-of-either-bus behavior with all 10 modules.
+- Prove loss-of-either-bus behavior with all 10 selected modules.
 - Implement the framed serial sender only after the PowerWall-Gateway receiver contract is fixed.
 - GitHub still labels this project as a fork even though its local upstream remote and inherited firmware have been removed.
 
@@ -241,5 +241,5 @@ T-CAN485 receiver pins and protocol are finalized.
 
 - Arduino OTA is serviced on every main-loop iteration after WiFi connects.
 - Hostname defaults to `outlander-bms.local`.
-- `outlander_bms_ota` uploads to `192.168.2.90` by default.
+- `outlander_bms_ota` defaults to the currently identified BMS at `192.168.2.99`; confirm identity before uploading.
 - OTA authentication comes from ignored `.config.h`; never commit credentials.
