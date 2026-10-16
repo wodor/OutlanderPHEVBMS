@@ -28,7 +28,7 @@ void test_soc_no_data_defaults_to_zero() {
     TEST_ASSERT_EQUAL_INT(0, g_bmsState.soc);
 }
 
-static void updateLowestCell(long voltageMv, unsigned long elapsedMs = 1000) {
+static void updateHighestCell(long voltageMv, unsigned long elapsedMs = 1000) {
     g_mockMillis += elapsedMs;
     g_bmsState.modules[0].present = true;
     g_bmsState.modules[0].voltages[0] = voltageMv;
@@ -37,25 +37,25 @@ static void updateLowestCell(long voltageMv, unsigned long elapsedMs = 1000) {
 }
 
 void test_soc_filter_rejects_brief_sag_then_accepts_sustained_sag() {
-    updateLowestCell(4020, 0);
-    TEST_ASSERT_EQUAL_INT(100, g_bmsState.soc);
-    for (int i = 0; i < 7; ++i) updateLowestCell(3490);
-    TEST_ASSERT_EQUAL_INT(100, g_bmsState.soc);
-    updateLowestCell(3490);
+    updateHighestCell(4020, 0);
+    TEST_ASSERT_EQUAL_INT(99, g_bmsState.soc);
+    for (int i = 0; i < 7; ++i) updateHighestCell(3490);
+    TEST_ASSERT_EQUAL_INT(99, g_bmsState.soc);
+    updateHighestCell(3490);
     TEST_ASSERT_EQUAL_INT(10, g_bmsState.soc);
     TEST_ASSERT_EQUAL_INT32(3490, socFilteredCellMv());
 }
 
 void test_soc_filter_limits_upward_recovery() {
-    updateLowestCell(4020, 0);
-    for (int i = 0; i < 8; ++i) updateLowestCell(3490);
+    updateHighestCell(4020, 0);
+    for (int i = 0; i < 8; ++i) updateHighestCell(3490);
     TEST_ASSERT_EQUAL_INT(10, g_bmsState.soc);
 
-    for (int i = 0; i < 8; ++i) updateLowestCell(4020);
+    for (int i = 0; i < 8; ++i) updateHighestCell(4020);
     TEST_ASSERT_EQUAL_INT(10, g_bmsState.soc);
-    for (int i = 0; i < 29; ++i) updateLowestCell(4020);
+    for (int i = 0; i < 29; ++i) updateHighestCell(4020);
     TEST_ASSERT_EQUAL_INT(11, g_bmsState.soc);
-    for (int i = 0; i < 30; ++i) updateLowestCell(4020);
+    for (int i = 0; i < 30; ++i) updateHighestCell(4020);
     TEST_ASSERT_EQUAL_INT(12, g_bmsState.soc);
 }
 
@@ -78,9 +78,41 @@ void test_soc_curve_matches_recorded_discharge_energy() {
 
 void test_soc_filter_upward_timer_handles_millis_rollover() {
     g_mockMillis = ULONG_MAX - 5000UL;
-    updateLowestCell(4020, 0);
-    for (int i = 0; i < 8; ++i) updateLowestCell(3490);
-    for (int i = 0; i < 8; ++i) updateLowestCell(4020);
-    for (int i = 0; i < 30; ++i) updateLowestCell(4020);
+    updateHighestCell(4020, 0);
+    for (int i = 0; i < 8; ++i) updateHighestCell(3490);
+    for (int i = 0; i < 8; ++i) updateHighestCell(4020);
+    for (int i = 0; i < 30; ++i) updateHighestCell(4020);
     TEST_ASSERT_EQUAL_INT(11, g_bmsState.soc);
+}
+
+void test_soc_uses_highest_selected_cell() {
+    g_bmsState.modules[0].present = true;
+    g_bmsState.modules[0].voltages[0] = 3490;
+    g_bmsState.modules[0].voltages[1] = 3625;
+    g_bmsState.updatePackStatistics();
+    socUpdate();
+    TEST_ASSERT_EQUAL_INT(13, g_bmsState.soc);
+    TEST_ASSERT_EQUAL_INT(13, socCalculateFromVoltage());
+    TEST_ASSERT_EQUAL_INT32(3625, socFilteredCellMv());
+}
+
+void test_soc_full_requires_live_highest_cell_at_4200() {
+    const SocCurvePoint curve[] = {{3200, 0}, {4010, 90}, {4200, 100}};
+    TEST_ASSERT_TRUE(settingsSetSocCurvePoints(curve, 3));
+    updateHighestCell(4199, 0);
+    TEST_ASSERT_EQUAL_INT(99, g_bmsState.soc);
+    TEST_ASSERT_EQUAL_INT(99, socCalculateFromVoltage());
+    updateHighestCell(4200, 1);
+    TEST_ASSERT_EQUAL_INT(100, g_bmsState.soc);
+    TEST_ASSERT_EQUAL_INT(100, socUnfilteredPercent());
+    // Even before the next filter sample, a fall below full must clear 100%.
+    updateHighestCell(4199, 1);
+    TEST_ASSERT_EQUAL_INT(99, g_bmsState.soc);
+    for (int i = 0; i < 15; ++i) updateHighestCell(4200);
+    TEST_ASSERT_EQUAL_INT32(4200, socFilteredCellMv());
+    updateHighestCell(4199);
+    TEST_ASSERT_EQUAL_INT(99, g_bmsState.soc);
+    TEST_ASSERT_EQUAL_INT32(4200, socFilteredCellMv());
+    updateHighestCell(4201);
+    TEST_ASSERT_EQUAL_INT(100, g_bmsState.soc);
 }

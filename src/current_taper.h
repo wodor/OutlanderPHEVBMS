@@ -7,6 +7,13 @@ struct CurrentLimits {
     int dischargeDa;
 };
 
+// MQTT keeps one-decimal precision, but small cell-voltage jitter must not
+// create a new retained state every three seconds. Changes accumulate against
+// the last published pair, so a genuine fast movement still crosses the
+// deadband and is published on the next fast-summary cycle.
+constexpr int CURRENT_LIMIT_MQTT_DEADBAND_DA = 5;  // 0.5 A
+constexpr unsigned long CURRENT_LIMIT_MQTT_MAX_HOLD_MS = 60000;
+
 // Calculate normal-use limits from selected-cell extrema. Invalid/missing data
 // returns zero in both directions; downstream freshness/protection gates remain
 // independently mandatory.
@@ -14,9 +21,19 @@ CurrentLimits currentTaperCalculate();
 CurrentLimits currentTaperCalculate(long highestCellMv, long lowestCellMv,
                                     const BmsSettings& settings);
 
+bool currentLimitsShouldPublish(const CurrentLimits& current,
+                                const CurrentLimits& lastPublished,
+                                unsigned long elapsedSincePublishMs);
+
 bool currentTaperSettingsValid(const BmsSettings& settings);
 
 // Atomic API format, in volts/amps:
 // chargeFullV,chargeReducedV,chargeStopV,chargeFullA,chargeReducedA,
 // dischargeFullV,dischargeReducedV,dischargeStopV,dischargeFullA,dischargeReducedA
 bool parseCurrentTaperConfig(const char* text, BmsSettings& output);
+
+// Apply one Home Assistant number-entity value without exposing partially
+// valid settings. The candidate is validated as a complete taper before the
+// caller's settings are changed.
+bool parseCurrentTaperParameter(const char* name, const char* text,
+                                BmsSettings& output);

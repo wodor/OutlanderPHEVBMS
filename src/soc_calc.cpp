@@ -37,8 +37,10 @@ long sampleMedian() {
 }
 
 int mapVoltageToSoc(long voltageMv) {
-    return interpolateSocCurve(voltageMv, g_bmsSettings.socCurvePoints,
-                               g_bmsSettings.socCurvePointCount);
+    if (voltageMv >= SOC_FULL_CELL_MV) return 100;
+    const int mapped = interpolateSocCurve(voltageMv, g_bmsSettings.socCurvePoints,
+                                          g_bmsSettings.socCurvePointCount);
+    return mapped < 100 ? mapped : 99;
 }
 }  // namespace
 
@@ -54,18 +56,18 @@ void socUpdate() {
         return;
     }
 
-    const long lowestCellMv = g_bmsState.lowestCellMv;
-    if (lowestCellMv <= 0 || lowestCellMv > 5000) return;
-    s_unfilteredPercent = mapVoltageToSoc(lowestCellMv);
+    const long highestCellMv = g_bmsState.highestCellMv;
+    if (highestCellMv <= 0 || highestCellMv > 5000) return;
+    s_unfilteredPercent = mapVoltageToSoc(highestCellMv);
     const unsigned long now = millis();
 
     if (!s_initialized) {
         for (uint8_t i = 0; i < SOC_MEDIAN_SAMPLES; ++i) {
-            s_voltageSamples[i] = lowestCellMv;
+            s_voltageSamples[i] = highestCellMv;
         }
         s_sampleCount = SOC_MEDIAN_SAMPLES;
         s_sampleIndex = 0;
-        s_filteredCellMv = lowestCellMv;
+        s_filteredCellMv = highestCellMv;
         g_bmsState.soc = s_unfilteredPercent;
         s_lastSampleMs = now;
         s_lastUpwardChangeMs = now;
@@ -73,14 +75,22 @@ void socUpdate() {
         return;
     }
 
+    // The endpoint follows the live maximum, never rounding or a stale median.
+    if (highestCellMv >= SOC_FULL_CELL_MV) {
+        g_bmsState.soc = 100;
+    } else if (g_bmsState.soc >= 100) {
+        g_bmsState.soc = 99;
+    }
     if (static_cast<unsigned long>(now - s_lastSampleMs) < SOC_SAMPLE_INTERVAL_MS) return;
     s_lastSampleMs = now;
-    s_voltageSamples[s_sampleIndex] = lowestCellMv;
+    s_voltageSamples[s_sampleIndex] = highestCellMv;
     s_sampleIndex = static_cast<uint8_t>((s_sampleIndex + 1U) % SOC_MEDIAN_SAMPLES);
     if (s_sampleCount < SOC_MEDIAN_SAMPLES) ++s_sampleCount;
     s_filteredCellMv = sampleMedian();
 
-    const int candidate = mapVoltageToSoc(s_filteredCellMv);
+    if (highestCellMv >= SOC_FULL_CELL_MV) return;
+    const int filtered = mapVoltageToSoc(s_filteredCellMv);
+    const int candidate = filtered < 100 ? filtered : 99;
     if (candidate <= g_bmsState.soc) {
         g_bmsState.soc = candidate;
         s_lastUpwardChangeMs = now;
@@ -98,10 +108,10 @@ void socUpdate() {
 int socCalculateFromVoltage() {
     if (!g_bmsState.hasAnyData()) return 0;
 
-    const long lowCellMv = g_bmsState.lowestCellMv;
-    if (lowCellMv <= 0 || lowCellMv > 5000) return g_bmsState.soc;
+    const long highCellMv = g_bmsState.highestCellMv;
+    if (highCellMv <= 0 || highCellMv > 5000) return g_bmsState.soc;
 
-    return mapVoltageToSoc(lowCellMv);
+    return mapVoltageToSoc(highCellMv);
 }
 
 void socResetFilter() {

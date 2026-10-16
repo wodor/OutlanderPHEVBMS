@@ -64,7 +64,7 @@ bool protectionCheck() {
     if (g_bmsState.hasAnyData()) {
         g_bmsState.updatePackStatistics();
         s_overTempFault = g_bmsState.highestTemp >= g_bmsSettings.overTemp;
-        s_overVoltageFault = g_bmsState.highestCellMv >= 4200;
+        s_overVoltageFault = g_bmsState.highestCellMv >= PROTECTION_OVER_VOLTAGE_MV;
         s_underVoltageFault = g_bmsState.lowestCellMv <= 2800;
     }
 

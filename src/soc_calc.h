@@ -6,6 +6,9 @@
 
 #include <Arduino.h>
 
+// Display reference, not a charge target or an energy/capacity estimate.
+constexpr long SOC_FULL_CELL_MV = 4200;
+
 void socInit();
 void socUpdate();
 int socCalculateFromVoltage();

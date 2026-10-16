@@ -11,6 +11,8 @@
 
 #include <Arduino.h>
 
+constexpr long PROTECTION_OVER_VOLTAGE_MV = 4200;
+
 /**
  * Initialize protection system
  */

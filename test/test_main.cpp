@@ -28,7 +28,10 @@ void test_settings_soc_curve_save_reload();
 void test_settings_current_taper_save_reload();
 void test_current_taper_uses_highest_for_charge_and_lowest_for_discharge();
 void test_current_taper_config_parser_is_atomic();
+void test_current_taper_parameter_parser_is_atomic();
 void test_current_taper_fails_closed_until_selected_cells_are_complete_and_fresh();
+void test_current_limit_mqtt_filter_suppresses_small_jitter_but_tracks_fast_changes();
+void test_current_limit_mqtt_filter_never_delays_zero_transitions();
 void test_settings_load_migrates_historical_soc_high_voltage_endpoints();
 void test_settings_load_preserves_current_and_emergency_soc_high_voltage_endpoints();
 void test_soc_curve_validation_accepts_exact_ordered_values();
@@ -41,6 +44,8 @@ void test_cmu_data_init();
 // Test functions from test_soc_calc.cpp
 void test_soc_update_uses_piecewise_voltage_curve();
 void test_soc_no_data_defaults_to_zero();
+void test_soc_uses_highest_selected_cell();
+void test_soc_full_requires_live_highest_cell_at_4200();
 void test_soc_filter_rejects_brief_sag_then_accepts_sustained_sag();
 void test_soc_filter_limits_upward_recovery();
 void test_soc_curve_matches_recorded_discharge_energy();
@@ -99,7 +104,10 @@ int main(int argc, char **argv) {
     RUN_TEST(test_settings_current_taper_save_reload);
     RUN_TEST(test_current_taper_uses_highest_for_charge_and_lowest_for_discharge);
     RUN_TEST(test_current_taper_config_parser_is_atomic);
+    RUN_TEST(test_current_taper_parameter_parser_is_atomic);
     RUN_TEST(test_current_taper_fails_closed_until_selected_cells_are_complete_and_fresh);
+    RUN_TEST(test_current_limit_mqtt_filter_suppresses_small_jitter_but_tracks_fast_changes);
+    RUN_TEST(test_current_limit_mqtt_filter_never_delays_zero_transitions);
     RUN_TEST(test_settings_load_migrates_historical_soc_high_voltage_endpoints);
     RUN_TEST(test_settings_load_preserves_current_and_emergency_soc_high_voltage_endpoints);
     RUN_TEST(test_soc_curve_validation_accepts_exact_ordered_values);
@@ -112,6 +120,8 @@ int main(int argc, char **argv) {
     // SOC calculation tests
     RUN_TEST(test_soc_update_uses_piecewise_voltage_curve);
     RUN_TEST(test_soc_no_data_defaults_to_zero);
+    RUN_TEST(test_soc_uses_highest_selected_cell);
+    RUN_TEST(test_soc_full_requires_live_highest_cell_at_4200);
     RUN_TEST(test_soc_filter_rejects_brief_sag_then_accepts_sustained_sag);
     RUN_TEST(test_soc_filter_limits_upward_recovery);
     RUN_TEST(test_soc_curve_matches_recorded_discharge_energy);

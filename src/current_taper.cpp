@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 
 namespace {
 int interpolate(int x, int x0, int x1, int y0, int y1) {
@@ -80,6 +81,35 @@ CurrentLimits currentTaperCalculate() {
                                  g_bmsSettings);
 }
 
+bool currentLimitsShouldPublish(const CurrentLimits& current,
+                                const CurrentLimits& lastPublished,
+                                unsigned long elapsedSincePublishMs) {
+    const bool chargeChanged = current.chargeDa != lastPublished.chargeDa;
+    const bool dischargeChanged = current.dischargeDa != lastPublished.dischargeDa;
+    if (!chargeChanged && !dischargeChanged) return false;
+
+    // Never debounce entry into or recovery from the fail-closed zero state.
+    if ((current.chargeDa == 0) != (lastPublished.chargeDa == 0) ||
+        (current.dischargeDa == 0) != (lastPublished.dischargeDa == 0)) {
+        return true;
+    }
+
+    const int chargeDelta = current.chargeDa > lastPublished.chargeDa
+        ? current.chargeDa - lastPublished.chargeDa
+        : lastPublished.chargeDa - current.chargeDa;
+    const int dischargeDelta = current.dischargeDa > lastPublished.dischargeDa
+        ? current.dischargeDa - lastPublished.dischargeDa
+        : lastPublished.dischargeDa - current.dischargeDa;
+    if (chargeDelta >= CURRENT_LIMIT_MQTT_DEADBAND_DA ||
+        dischargeDelta >= CURRENT_LIMIT_MQTT_DEADBAND_DA) {
+        return true;
+    }
+
+    // Eventually expose a persistent small change without allowing jitter to
+    // write a new Home Assistant state on every fast-summary cycle.
+    return elapsedSincePublishMs >= CURRENT_LIMIT_MQTT_MAX_HOLD_MS;
+}
+
 bool parseCurrentTaperConfig(const char* text, BmsSettings& output) {
     if (text == nullptr) return false;
     float values[10];
@@ -103,6 +133,46 @@ bool parseCurrentTaperConfig(const char* text, BmsSettings& output) {
     candidate.dischargeStopVoltageMv = static_cast<int>(std::lround(values[7] * 1000.0f));
     candidate.dischargeFullCurrentDa = ampsToDeciamps(values[8]);
     candidate.dischargeReducedCurrentDa = ampsToDeciamps(values[9]);
+    if (!currentTaperSettingsValid(candidate)) return false;
+    output = candidate;
+    return true;
+}
+
+bool parseCurrentTaperParameter(const char* name, const char* text,
+                                BmsSettings& output) {
+    if (name == nullptr || text == nullptr) return false;
+
+    float value = 0.0f;
+    char trailing = '\0';
+    if (std::sscanf(text, "%f%c", &value, &trailing) != 1 || !std::isfinite(value)) {
+        return false;
+    }
+
+    BmsSettings candidate = output;
+    if (std::strcmp(name, "charge_full_voltage") == 0) {
+        candidate.chargeFullVoltageMv = static_cast<int>(std::lround(value * 1000.0f));
+    } else if (std::strcmp(name, "charge_reduced_voltage") == 0) {
+        candidate.chargeReducedVoltageMv = static_cast<int>(std::lround(value * 1000.0f));
+    } else if (std::strcmp(name, "charge_stop_voltage") == 0) {
+        candidate.chargeStopVoltageMv = static_cast<int>(std::lround(value * 1000.0f));
+    } else if (std::strcmp(name, "charge_full_current") == 0) {
+        candidate.chargeFullCurrentDa = ampsToDeciamps(value);
+    } else if (std::strcmp(name, "charge_reduced_current") == 0) {
+        candidate.chargeReducedCurrentDa = ampsToDeciamps(value);
+    } else if (std::strcmp(name, "discharge_full_voltage") == 0) {
+        candidate.dischargeFullVoltageMv = static_cast<int>(std::lround(value * 1000.0f));
+    } else if (std::strcmp(name, "discharge_reduced_voltage") == 0) {
+        candidate.dischargeReducedVoltageMv = static_cast<int>(std::lround(value * 1000.0f));
+    } else if (std::strcmp(name, "discharge_stop_voltage") == 0) {
+        candidate.dischargeStopVoltageMv = static_cast<int>(std::lround(value * 1000.0f));
+    } else if (std::strcmp(name, "discharge_full_current") == 0) {
+        candidate.dischargeFullCurrentDa = ampsToDeciamps(value);
+    } else if (std::strcmp(name, "discharge_reduced_current") == 0) {
+        candidate.dischargeReducedCurrentDa = ampsToDeciamps(value);
+    } else {
+        return false;
+    }
+
     if (!currentTaperSettingsValid(candidate)) return false;
     output = candidate;
     return true;

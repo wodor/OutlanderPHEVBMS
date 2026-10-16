@@ -307,6 +307,29 @@ void test_current_taper_config_parser_is_atomic() {
     TEST_ASSERT_EQUAL_INT(before.dischargeStopVoltageMv, parsed.dischargeStopVoltageMv);
 }
 
+void test_current_taper_parameter_parser_is_atomic() {
+    BmsSettings parsed;
+    TEST_ASSERT_TRUE(parseCurrentTaperParameter(
+        "charge_full_voltage", "3.880", parsed));
+    TEST_ASSERT_EQUAL_INT(3880, parsed.chargeFullVoltageMv);
+    TEST_ASSERT_TRUE(parseCurrentTaperParameter(
+        "discharge_reduced_current", "1.5", parsed));
+    TEST_ASSERT_EQUAL_INT(15, parsed.dischargeReducedCurrentDa);
+
+    const BmsSettings before = parsed;
+    TEST_ASSERT_FALSE(parseCurrentTaperParameter(
+        "charge_full_voltage", "4.100", parsed));
+    TEST_ASSERT_EQUAL_INT(before.chargeFullVoltageMv, parsed.chargeFullVoltageMv);
+    TEST_ASSERT_FALSE(parseCurrentTaperParameter(
+        "discharge_stop_voltage", "2.800", parsed));
+    TEST_ASSERT_EQUAL_INT(before.dischargeStopVoltageMv, parsed.dischargeStopVoltageMv);
+    TEST_ASSERT_FALSE(parseCurrentTaperParameter(
+        "not_a_parameter", "3.900", parsed));
+    TEST_ASSERT_FALSE(parseCurrentTaperParameter(
+        "charge_full_current", "20A", parsed));
+    TEST_ASSERT_EQUAL_INT(before.chargeFullCurrentDa, parsed.chargeFullCurrentDa);
+}
+
 void test_current_taper_fails_closed_until_selected_cells_are_complete_and_fresh() {
     g_bmsSettings.expectedCmusA = 0x001;
     g_bmsSettings.expectedCmusB = 0;
@@ -330,6 +353,24 @@ void test_current_taper_fails_closed_until_selected_cells_are_complete_and_fresh
     limits = currentTaperCalculate();
     TEST_ASSERT_EQUAL_INT(0, limits.chargeDa);
     TEST_ASSERT_EQUAL_INT(0, limits.dischargeDa);
+}
+
+void test_current_limit_mqtt_filter_suppresses_small_jitter_but_tracks_fast_changes() {
+    const CurrentLimits published = {100, 150};
+
+    TEST_ASSERT_FALSE(currentLimitsShouldPublish({101, 149}, published, 3000));
+    TEST_ASSERT_FALSE(currentLimitsShouldPublish({104, 146}, published, 59000));
+    TEST_ASSERT_TRUE(currentLimitsShouldPublish({105, 150}, published, 3000));
+    TEST_ASSERT_TRUE(currentLimitsShouldPublish({100, 145}, published, 3000));
+    TEST_ASSERT_TRUE(currentLimitsShouldPublish({101, 149}, published, 60000));
+    TEST_ASSERT_FALSE(currentLimitsShouldPublish(published, published, 60000));
+}
+
+void test_current_limit_mqtt_filter_never_delays_zero_transitions() {
+    TEST_ASSERT_TRUE(currentLimitsShouldPublish({0, 150}, {1, 150}, 3000));
+    TEST_ASSERT_TRUE(currentLimitsShouldPublish({1, 150}, {0, 150}, 3000));
+    TEST_ASSERT_TRUE(currentLimitsShouldPublish({100, 0}, {100, 1}, 3000));
+    TEST_ASSERT_TRUE(currentLimitsShouldPublish({100, 1}, {100, 0}, 3000));
 }
 
 void test_settings_soc_curve_save_reload() {

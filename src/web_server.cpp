@@ -200,6 +200,9 @@ static String buildSummaryJson() {
     json += "\"highestTemp\":" + String(g_bmsState.highestTemp, 1) + ",";
     json += "\"avgTemp\":" + String(g_bmsState.avgTemp, 1) + ",";
     json += "\"soc\":" + String(g_bmsState.soc) + ",";
+    json += "\"socVoltageSource\":\"highest_cell\",";
+    json += "\"socFullCellMv\":" + String(SOC_FULL_CELL_MV) + ",";
+    json += "\"overVoltageTripMv\":" + String(PROTECTION_OVER_VOLTAGE_MV) + ",";
     json += "\"socUnfiltered\":" + String(socUnfilteredPercent()) + ",";
     json += "\"socFilteredCellMv\":" + String(socFilteredCellMv()) + ",";
     json += "\"socCurvePoints\":\"" + String(socCurveText) + "\",";
@@ -442,7 +445,7 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
     <section class="section">
         <div class="section-title">Pack</div>
         <div class="metric-grid">
-            <div class="metric"><div class="metric-value" id="soc">--</div><div class="metric-label">State of Charge</div></div>
+            <div class="metric"><div class="metric-value" id="soc">--</div><div class="metric-label">Highest-cell voltage SOC (100% at 4.200 V)</div></div>
             <div class="metric"><div class="metric-value" id="packVoltage">--</div><div class="metric-label">Pack Voltage (V)</div></div>
             <div class="metric"><div class="metric-value" id="modulesOnline">--</div><div class="metric-label">Modules Online</div><div class="metric-note" id="designVoltage">Design --</div></div>
             <div class="metric"><div class="metric-value" id="chargeLimit">--</div><div class="metric-label">Charge Limit (A)</div></div>

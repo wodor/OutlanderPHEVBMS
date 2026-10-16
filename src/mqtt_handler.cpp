@@ -51,8 +51,12 @@ long s_lastCellDeltaMv = -1;
 long s_lastMinimumCellMv = -1;
 long s_lastMaximumCellMv = -1;
 String s_lastDesignVoltage;
-String s_lastCurrentLimits;
+CurrentLimits s_lastPublishedCurrentLimits = {0, 0};
+bool s_currentLimitsPublished = false;
+unsigned long s_lastCurrentLimitsPublish = 0;
 int s_lastBalancingCells = -1;
+String s_lastTaperControlState;
+int s_lastBalancingEnabled = -1;
 uint32_t s_heartbeatSequence = 0;
 unsigned long s_lastBalancingCountPublish = 0;
 int s_lastModuleMaximumTempTenths[BMS_MODULE_COUNT];
@@ -104,6 +108,38 @@ void publishDiscovery(const String& uniqueId, const String& name, const String& 
     publish(topic, payload);
 }
 
+void publishNumberDiscovery(const String& token, const String& name, const char* unit,
+                            float minimum, float maximum, float step,
+                            const String& deviceJson) {
+    const String uniqueId = "outlander_bms_" + token;
+    const String controlRoot = baseTopic() + "/control/current_taper/" + token;
+    const String topic = "homeassistant/number/" + uniqueId + "/config";
+    String payload = "{\"name\":\"" + name + "\",\"uniq_id\":\"" + uniqueId +
+        "\",\"stat_t\":\"" + controlRoot + "/state\",\"cmd_t\":\"" + controlRoot +
+        "/set\",\"avty_t\":\"" + availabilityTopic() +
+        "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"mode\":\"box\"" +
+        ",\"optimistic\":false,\"retain\":false" +
+        ",\"min\":" + String(minimum, 3) + ",\"max\":" + String(maximum, 3) +
+        ",\"step\":" + String(step, 3) + ",\"entity_category\":\"config\"";
+    if (unit && unit[0]) payload += ",\"unit_of_meas\":\"" + String(unit) + "\"";
+    payload += ",\"dev\":" + deviceJson + "}";
+    publish(topic, payload);
+}
+
+void publishSwitchDiscovery(const String& deviceJson) {
+    const String uniqueId = "outlander_bms_balancing";
+    const String controlRoot = baseTopic() + "/control/balancing";
+    const String topic = "homeassistant/switch/" + uniqueId + "/config";
+    const String payload = "{\"name\":\"Balancing\",\"uniq_id\":\"" + uniqueId +
+        "\",\"stat_t\":\"" + controlRoot + "/state\",\"cmd_t\":\"" + controlRoot +
+        "/set\",\"pl_on\":\"ON\",\"pl_off\":\"OFF\",\"stat_on\":\"ON\"" +
+        ",\"stat_off\":\"OFF\",\"avty_t\":\"" + availabilityTopic() +
+        "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\"" +
+        ",\"optimistic\":false,\"retain\":false,\"entity_category\":\"config\"" +
+        ",\"dev\":" + deviceJson + "}";
+    publish(topic, payload);
+}
+
 String packDeviceJson() {
     return "{\"ids\":[\"outlander_bms\"],\"name\":\"Outlander BMS\",\"mf\":\"Mitsubishi\",\"mdl\":\"Outlander PHEV BMS\"}";
 }
@@ -124,7 +160,7 @@ void publishPackDiscovery() {
     publishDiscovery("outlander_bms_soc", "State of Charge", root + "soc", "%", "battery", "measurement", device, 0);
     publishDiscovery("outlander_bms_soc_unfiltered", "Unfiltered State of Charge",
                      root + "soc_unfiltered", "%", "", "measurement", device, 0);
-    publishDiscovery("outlander_bms_soc_filtered_cell_voltage", "SOC Filtered Minimum Cell Voltage",
+    publishDiscovery("outlander_bms_soc_filtered_cell_voltage", "SOC Filtered Maximum Cell Voltage",
                      root + "soc_filtered_cell_voltage", "V", "voltage", "measurement", device, 3);
     publishDiscovery("outlander_bms_soc_curve_points", "SOC Curve Points",
                      root + "soc_curve_points", "", "", "", device);
@@ -138,6 +174,17 @@ void publishPackDiscovery() {
     publishDiscovery("outlander_bms_discharge_current_limit", "Discharge Current Limit", root + "discharge_current_limit", "A", "current", "measurement", device, 1);
     publishDiscovery("outlander_bms_balancing_cell_count", "Balancing Cell Count", root + "balancing_cell_count", "", "", "measurement", device, 0);
     publishDiscovery("outlander_bms_protection_state", "Protection State", root + "protection_state", "", "", "", device);
+    publishNumberDiscovery("charge_full_voltage", "Charge Full Voltage", "V", 2.500f, 4.199f, 0.001f, device);
+    publishNumberDiscovery("charge_reduced_voltage", "Charge Reduced Voltage", "V", 2.500f, 4.199f, 0.001f, device);
+    publishNumberDiscovery("charge_stop_voltage", "Charge Stop Voltage", "V", 2.500f, 4.199f, 0.001f, device);
+    publishNumberDiscovery("charge_full_current", "Charge Full Current", "A", 0.1f, 100.0f, 0.1f, device);
+    publishNumberDiscovery("charge_reduced_current", "Charge Reduced Current", "A", 0.1f, 100.0f, 0.1f, device);
+    publishNumberDiscovery("discharge_full_voltage", "Discharge Full Voltage", "V", 2.801f, 4.500f, 0.001f, device);
+    publishNumberDiscovery("discharge_reduced_voltage", "Discharge Reduced Voltage", "V", 2.801f, 4.500f, 0.001f, device);
+    publishNumberDiscovery("discharge_stop_voltage", "Discharge Stop Voltage", "V", 2.801f, 4.500f, 0.001f, device);
+    publishNumberDiscovery("discharge_full_current", "Discharge Full Current", "A", 0.1f, 100.0f, 0.1f, device);
+    publishNumberDiscovery("discharge_reduced_current", "Discharge Reduced Current", "A", 0.1f, 100.0f, 0.1f, device);
+    publishSwitchDiscovery(device);
     s_packDiscoverySent = true;
 }
 
@@ -251,7 +298,7 @@ void publishCellMeans() {
     resetCellSamples();
 }
 
-void publishFastSummary() {
+void publishFastSummary(unsigned long now) {
   const String root = baseTopic() + "/pack/";
   // Unlike state topics, this is intentionally not retained: subscribers use
   // its regular arrival as proof that BMS telemetry is still being produced.
@@ -344,11 +391,20 @@ void publishFastSummary() {
     const CurrentLimits limits = currentTaperCalculate();
     const String currentLimits = String(limits.chargeDa / 10.0f, 1) + "," +
                                  String(limits.dischargeDa / 10.0f, 1);
-    if (s_forcePublish || currentLimits != s_lastCurrentLimits) {
-        publish(root + "charge_current_limit", String(limits.chargeDa / 10.0f, 1));
-        publish(root + "discharge_current_limit", String(limits.dischargeDa / 10.0f, 1));
-        publish(root + "current_limits", currentLimits);
-        s_lastCurrentLimits = currentLimits;
+    const bool limitUpdateDue = !s_currentLimitsPublished ||
+        currentLimitsShouldPublish(limits, s_lastPublishedCurrentLimits,
+                                   now - s_lastCurrentLimitsPublish);
+    if (s_forcePublish || limitUpdateDue) {
+        const bool chargePublished = publish(
+            root + "charge_current_limit", String(limits.chargeDa / 10.0f, 1));
+        const bool dischargePublished = publish(
+            root + "discharge_current_limit", String(limits.dischargeDa / 10.0f, 1));
+        const bool pairPublished = publish(root + "current_limits", currentLimits);
+        if (chargePublished && dischargePublished && pairPublished) {
+            s_lastPublishedCurrentLimits = limits;
+            s_currentLimitsPublished = true;
+            s_lastCurrentLimitsPublish = now;
+        }
     }
 }
 
@@ -358,6 +414,93 @@ void publishBalancingCellCount() {
         publish(baseTopic() + "/pack/balancing_cell_count", String(balancingCells));
         s_lastBalancingCells = balancingCells;
     }
+}
+
+String taperControlFingerprint() {
+    return String(g_bmsSettings.chargeFullVoltageMv) + "," +
+        String(g_bmsSettings.chargeReducedVoltageMv) + "," +
+        String(g_bmsSettings.chargeStopVoltageMv) + "," +
+        String(g_bmsSettings.chargeFullCurrentDa) + "," +
+        String(g_bmsSettings.chargeReducedCurrentDa) + "," +
+        String(g_bmsSettings.dischargeFullVoltageMv) + "," +
+        String(g_bmsSettings.dischargeReducedVoltageMv) + "," +
+        String(g_bmsSettings.dischargeStopVoltageMv) + "," +
+        String(g_bmsSettings.dischargeFullCurrentDa) + "," +
+        String(g_bmsSettings.dischargeReducedCurrentDa);
+}
+
+void publishControlStates(bool force = false) {
+    const String taperState = taperControlFingerprint();
+    if (force || taperState != s_lastTaperControlState) {
+        const String root = baseTopic() + "/control/current_taper/";
+        bool published = true;
+        published = publish(root + "charge_full_voltage/state",
+                            String(g_bmsSettings.chargeFullVoltageMv / 1000.0f, 3)) && published;
+        published = publish(root + "charge_reduced_voltage/state",
+                            String(g_bmsSettings.chargeReducedVoltageMv / 1000.0f, 3)) && published;
+        published = publish(root + "charge_stop_voltage/state",
+                            String(g_bmsSettings.chargeStopVoltageMv / 1000.0f, 3)) && published;
+        published = publish(root + "charge_full_current/state",
+                            String(g_bmsSettings.chargeFullCurrentDa / 10.0f, 1)) && published;
+        published = publish(root + "charge_reduced_current/state",
+                            String(g_bmsSettings.chargeReducedCurrentDa / 10.0f, 1)) && published;
+        published = publish(root + "discharge_full_voltage/state",
+                            String(g_bmsSettings.dischargeFullVoltageMv / 1000.0f, 3)) && published;
+        published = publish(root + "discharge_reduced_voltage/state",
+                            String(g_bmsSettings.dischargeReducedVoltageMv / 1000.0f, 3)) && published;
+        published = publish(root + "discharge_stop_voltage/state",
+                            String(g_bmsSettings.dischargeStopVoltageMv / 1000.0f, 3)) && published;
+        published = publish(root + "discharge_full_current/state",
+                            String(g_bmsSettings.dischargeFullCurrentDa / 10.0f, 1)) && published;
+        published = publish(root + "discharge_reduced_current/state",
+                            String(g_bmsSettings.dischargeReducedCurrentDa / 10.0f, 1)) && published;
+        if (published) s_lastTaperControlState = taperState;
+    }
+
+    const int balancingEnabled = g_bmsState.balancingEnabled ? 1 : 0;
+    if (force || balancingEnabled != s_lastBalancingEnabled) {
+        if (publish(baseTopic() + "/control/balancing/state",
+                    balancingEnabled ? "ON" : "OFF")) {
+            s_lastBalancingEnabled = balancingEnabled;
+        }
+    }
+}
+
+void handleMqttCommand(char* topic, byte* payload, unsigned int length) {
+    String command;
+    command.reserve(length);
+    for (unsigned int index = 0; index < length; ++index) {
+        command += static_cast<char>(payload[index]);
+    }
+    command.trim();
+
+    const String receivedTopic(topic);
+    const String balancingTopic = baseTopic() + "/control/balancing/set";
+    if (receivedTopic == balancingTopic) {
+        command.toUpperCase();
+        if (command == "ON" || command == "OFF") {
+            g_bmsState.balancingEnabled = command == "ON";
+            Serial.printf("[MQTT] Balancing %s\n",
+                          g_bmsState.balancingEnabled ? "enabled" : "disabled");
+        } else {
+            Serial.println("[MQTT] Rejected invalid balancing command");
+        }
+        publishControlStates(true);
+        return;
+    }
+
+    const String taperPrefix = baseTopic() + "/control/current_taper/";
+    const String setSuffix = "/set";
+    if (!receivedTopic.startsWith(taperPrefix) || !receivedTopic.endsWith(setSuffix)) return;
+    const String parameter = receivedTopic.substring(
+        taperPrefix.length(), receivedTopic.length() - setSuffix.length());
+    if (parseCurrentTaperParameter(parameter.c_str(), command.c_str(), g_bmsSettings)) {
+        settingsSave();
+        Serial.printf("[MQTT] Updated current taper parameter %s\n", parameter.c_str());
+    } else {
+        Serial.printf("[MQTT] Rejected invalid current taper parameter %s\n", parameter.c_str());
+    }
+    publishControlStates(true);
 }
 
 void publishProtectionImmediately() {
@@ -373,10 +516,18 @@ bool connect() {
     const bool connected = s_mqtt.connect(MQTT_CLIENT_ID, MQTT_USERNAME, MQTT_PASSWORD,
                                           availabilityTopic().c_str(), 0, true, "offline");
     if (connected) {
+        if (!s_mqtt.subscribe((baseTopic() + "/control/#").c_str())) {
+            Serial.println("[MQTT] Failed to subscribe to control topics");
+            s_mqtt.disconnect();
+            return false;
+        }
         publish(availabilityTopic(), "online");
         s_packDiscoverySent = false;
         memset(s_cellDiscoverySent, 0, sizeof(s_cellDiscoverySent));
         memset(s_moduleDiscoverySent, 0, sizeof(s_moduleDiscoverySent));
+        s_currentLimitsPublished = false;
+        s_lastTaperControlState = "";
+        s_lastBalancingEnabled = -1;
         s_forcePublish = true;
         Serial.println("[MQTT] Connected to Home Assistant broker");
     }
@@ -394,6 +545,7 @@ void mqttInit() {
     }
     s_mqtt.setServer(MQTT_HOST, MQTT_PORT);
     s_mqtt.setBufferSize(1024);
+    s_mqtt.setCallback(handleMqttCommand);
 }
 
 void mqttTick() {
@@ -409,6 +561,7 @@ void mqttTick() {
 
     s_mqtt.loop();
     publishPackDiscovery();
+    publishControlStates();
     publishProtectionImmediately();
 
     if (now - s_lastCellSample >= CELL_SAMPLE_INTERVAL_MS) {
@@ -417,7 +570,7 @@ void mqttTick() {
     }
     if (now - s_lastFastPublish >= FAST_PUBLISH_INTERVAL_MS) {
         s_lastFastPublish = now;
-        publishFastSummary();
+        publishFastSummary(now);
     }
     if (now - s_lastCellPublish >= CELL_PUBLISH_INTERVAL_MS) {
         s_lastCellPublish = now;
