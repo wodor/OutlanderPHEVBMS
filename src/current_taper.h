@@ -1,11 +1,27 @@
 #pragma once
 
 #include "bms_data.h"
+#include "charge_hysteresis.h"
 
 struct CurrentLimits {
     int chargeDa;
     int dischargeDa;
 };
+
+struct TaperSnapshot {
+    CurrentLimits limits{0, 0};
+    long minMv = 0, maxMv = 0;
+    int fullMv = 0, reducedMv = 0, stopMv = 0;
+    bool healthy = false, storageError = false;
+    unsigned reason = 4;
+    charge::Mode mode = charge::Mode::NORMAL;
+    uint32_t event = 0, peakMv = 0, ageMs = 0, offRemainingMs = 0, dwellMs = 0, updatedMs = 0;
+};
+void currentTaperInit();
+void currentTaperTick();  // main-loop owner only
+TaperSnapshot currentTaperSnapshot();  // coherent read-only copy
+BmsSettings currentTaperSettingsSnapshot();
+void currentTaperApplySettings(const BmsSettings& settings);
 
 // MQTT keeps one-decimal precision, but small cell-voltage jitter must not
 // create a new retained state every three seconds. Changes accumulate against

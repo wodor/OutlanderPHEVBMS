@@ -7,6 +7,7 @@
 #include "../src/bms_data.h"
 #include "../src/soc_curve_validation.h"
 #include "../src/current_taper.h"
+#include "../src/protection.h"
 #include <Preferences.h>
 
 extern BmsState g_bmsState;
@@ -340,17 +341,21 @@ void test_current_taper_fails_closed_until_selected_cells_are_complete_and_fresh
     cmu.recordRequiredFrame(MSG_TYPE_STATUS, g_mockMillis);
     cmu.recordRequiredFrame(MSG_TYPE_VOLTS_1, g_mockMillis);
     g_bmsState.updatePackStatistics();
+    currentTaperTick();
     CurrentLimits limits = currentTaperCalculate();
     TEST_ASSERT_EQUAL_INT(0, limits.chargeDa);
     TEST_ASSERT_EQUAL_INT(0, limits.dischargeDa);
 
     cmu.recordRequiredFrame(MSG_TYPE_VOLTS_2, g_mockMillis);
     g_bmsState.updatePackStatistics();
+    protectionCheck();
+    currentTaperTick();
     limits = currentTaperCalculate();
     TEST_ASSERT_EQUAL_INT(200, limits.chargeDa);
     TEST_ASSERT_EQUAL_INT(200, limits.dischargeDa);
 
     g_mockMillis += CAN_DATA_TIMEOUT_MS;
+    currentTaperTick();
     limits = currentTaperCalculate();
     TEST_ASSERT_EQUAL_INT(0, limits.chargeDa);
     TEST_ASSERT_EQUAL_INT(0, limits.dischargeDa);

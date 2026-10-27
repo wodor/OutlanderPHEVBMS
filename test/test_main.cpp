@@ -7,6 +7,7 @@
 #include "../src/bms_data.h"
 #include "../src/protection.h"
 #include "../src/soc_calc.h"
+#include "../src/current_taper.h"
 #include <Preferences.h>
 
 extern BmsState g_bmsState;
@@ -72,6 +73,11 @@ void test_temperature_array_bounds();
 
 // Unity setUp/tearDown - called before/after each test
 extern unsigned long g_mockMillis;
+void test_hysteresis_boundaries_and_tail();
+void test_hysteresis_health_config_and_wrap();
+void test_hysteresis_persistence_and_failures();
+void test_hysteresis_chatter_replay();
+void test_hysteresis_runtime_snapshot_and_restore();
 
 void setUp(void) {
     Preferences::clearAll();
@@ -80,6 +86,7 @@ void setUp(void) {
     socResetFilter();
     protectionInit();
     g_mockMillis = 0;
+    currentTaperInit();
 }
 
 void tearDown(void) {
@@ -91,6 +98,11 @@ int main(int argc, char **argv) {
     (void)argv;
 
     UNITY_BEGIN();
+    RUN_TEST(test_hysteresis_boundaries_and_tail);
+    RUN_TEST(test_hysteresis_health_config_and_wrap);
+    RUN_TEST(test_hysteresis_persistence_and_failures);
+    RUN_TEST(test_hysteresis_chatter_replay);
+    RUN_TEST(test_hysteresis_runtime_snapshot_and_restore);
 
     // BMS Data tests
     RUN_TEST(test_pack_statistics_voltages);

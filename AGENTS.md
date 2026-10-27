@@ -118,13 +118,13 @@ Tests cover:
 - BMS data structures and calculations
 - voltage-derived SOC calculation
 - persisted configuration validation
-- GPIO15 HIGH initialization, timeout/fault logic, and bounded override with mocked outputs
+- GPIO15 LOW initialization, complete-data startup gating, timeout/fault logic, and bounded override with mocked outputs
 - pack statistics and safety-critical boundaries
 
 The native build excludes CAN handler, main loop, MQTT and web runtime.
-Injected module timestamps do not test per-field CAN freshness or the actual
-GPIO15/breaker chain. Do not describe this suite as full CAN-path or physical
-fail-low validation.
+Injected field timestamps exercise the state gate, not actual CAN reception
+or the GPIO15/breaker chain. Do not describe this suite as full CAN-path or
+physical fail-low validation.
 
 ### CI/CD Configuration
 
@@ -223,17 +223,19 @@ T-CAN485 receiver pins and protocol are finalized.
 
 ## Current Protection Contract
 
+Source checked again on 27 October 2026. Earlier startup/module-wide freshness
+descriptions were stale; use the complete-data fail-low contract below.
+
 - GPIO15 is active HIGH: HIGH means safe-to-use, LOW must trip the external breaker chain.
-- `protectionInit()` initializes GPIO15 HIGH. Communication faults are suppressed
-  until ten seconds of uptime, even without any selected CMU data. After that,
-  no global selected-CMU traffic for ten seconds or a selected module
-  stale/missing for ten seconds drives LOW. Detected high temperature or cell
-  voltage `>= 4200 mV` / `<= 2800 mV` also drives LOW, subject to the existing
-  voltage-only override.
-- Freshness is module-wide: accepted CMU types 1–4 refresh the timestamp,
-  although type 4 updates no voltage/temperature field. Frozen status or
-  voltage groups can therefore appear fresh. Do not claim complete-data
-  gating or a fail-low boot contract that the code does not implement.
+- `setup()` and `protectionInit()` initialize GPIO15 LOW. There is no startup
+  grace allowing HIGH before complete selected-CMU health. Detected high
+  temperature or cell voltage `>= 4200 mV` / `<= 2800 mV` also drives LOW,
+  subject to the existing voltage-only override.
+- Each selected CMU must have fresh valid status/temperatures and both voltage
+  groups. Type 4 or malformed traffic cannot establish completeness. Current
+  taper uses the same complete-data gate. Application fail-low source and
+  host tests do not prove reset/bootloader electrical behaviour or the physical
+  breaker chain; retain that separate commissioning boundary.
 - Temperature and communication faults cannot be overridden.
 - The supervised override can suppress only the emergency voltage trip and requires fresh CMU data plus safe temperature.
 - The current highest-cell SOC/design reference is 4.20 V (336 V for 80 cells),
@@ -249,14 +251,21 @@ T-CAN485 receiver pins and protocol are finalized.
 
 ## Current State and Remaining Work
 
-- 46 native tests and the ESP32-S3 OTA environment build passed locally on 16 October 2026.
-- The current API exposes the highest-cell gauge; the exact installed binary is not proven byte-for-byte from this checkout. Record the source commit and image hash on the next deployment.
+- 55 native tests and the ESP32-S3 OTA environment build passed locally on 27 October 2026.
+- The current API exposes the highest-cell gauge and charge-hysteresis diagnostics. The 27 October uploaded artifact hash is recorded below; live v2 telemetry verifies runtime features, not a remote byte-for-byte firmware readback.
 - Physically prove GPIO15 LOW through the SSR/GEYA/V9 breaker chain for every fault and power-loss case.
-- Address startup and per-field freshness gaps with reproducing tests; prove loss-of-either-bus and frozen status/voltage-group behavior with all 10 selected modules.
+- Preserve the implemented startup/per-field freshness gates; prove loss-of-either-bus and frozen status/voltage-group runtime behaviour with all selected modules.
 - Implement the framed serial sender only after the PowerWall-Gateway receiver contract is fixed.
 - GitHub still labels this project as a fork even though its local upstream remote and inherited firmware have been removed.
 
 ## OTA Updates
+
+The [hysteresis/full-sync reference](../docs/16-charge-hysteresis-and-full-sync.md)
+describes the implementation deployed on 27 October, Gateway first at 15:15
+UTC/GMT and BMS at 15:22. Uploaded BMS SHA-256 is
+`0c2a228d308c02918aa5b9f4cfa9a742c52f968802faa877c3387dedc0bac76e`.
+Live summary and v2 MQTT confirm the new runtime; physical hold/restart and
+GPIO15-chain validation remain separate. Compatible FoxGW support is required.
 
 - Arduino OTA is serviced on every main-loop iteration after WiFi connects.
 - Hostname defaults to `outlander-bms.local`.

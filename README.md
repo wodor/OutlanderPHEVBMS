@@ -47,7 +47,8 @@ immediately, and falling below it clears 100% immediately. Below full, the
 stored energy or establish usable capacity.
 
 With 80 selected cells, the 3.20/4.20-V design endpoints advertise 256/336 V.
-The normal charge taper stops at 4.150 V, so charging can stop before this
+The normal charge taper stopped at **4.140 V in the 27 October 2026 readback**;
+the persisted setting, not an old example/default, is authoritative. Charging can stop before this
 gauge reaches 100%. Emergency protection independently trips at >=4200 mV.
 A 1-mV display increment is not proof of 1-mV measurement accuracy.
 The current masks select ten CMUs across both buses; an additional observed,
@@ -205,13 +206,22 @@ include the high-temperature trip, voltage-derived SOC curve, expected-CMU
 masks, and the normal-use current taper. Emergency cell-voltage stops and the
 GPIO15 permissive remain fixed in `src/protection.cpp`.
 
-Charge current is governed only by the highest selected cell. The 16 October
-live settings allow up to 13 A through 4.050 V, taper to 2 A at 4.140 V, and
-stop at 4.150 V. Discharge is governed only by the lowest selected cell: up to
+Charge current is governed only by the highest selected cell. At **27 October
+2026, 14:28:58 UTC/GMT**, live settings allowed up to 13 A through 4.050 V,
+tapering to 1 A at 4.130 V and stopping at 4.140 V. Discharge is governed only by the lowest selected cell: up to
 11 A at and above 3.600 V, taper to 1 A at 3.500 V, and stop at 3.300 V.
 The BMS publishes the two
 limits atomically on `outlander_bms/pack/current_limits`; PowerWall-Gateway
 turns them into the FoxESS CAN current ceilings.
+
+The [deployed hysteresis implementation](../docs/16-charge-hysteresis-and-full-sync.md)
+has a 20 mV restart gap, 60-second voltage dwell, five-minute minimum pause
+and a reduced-current restart. Both BMS v2 endpoint telemetry and compatible
+FoxGW full detection are implemented, with 55/55 BMS native tests and both
+target builds passing on 27 October. Gateway was uploaded at 15:15 UTC/GMT,
+then BMS at 15:22. Live BMS summary exposes NORMAL mode, a 4120 mV resume
+threshold and no storage error; MQTT emits v2. A physical hold/restart cycle
+has not been forced or verified. Compatibility requires the new Gateway first.
 
 On startup, the firmware migrates the historical 4.00 V voltage-SOC endpoint
 to 4.05 V. An existing 4.05 V endpoint remains unchanged. The 4.20 V emergency

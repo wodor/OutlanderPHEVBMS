@@ -33,6 +33,7 @@
 #include "soc_calc.h"
 #include "protection.h"
 #include "mqtt_handler.h"
+#include "current_taper.h"
 
 // =============================================================================
 // TIMING STATE
@@ -106,6 +107,7 @@ void setup() {
 
     // Keep the permissive low until complete selected-CMU data proves health.
     protectionInit();
+    currentTaperInit();
 
     // Initialize CAN bus
     if (!canInit()) {
@@ -172,9 +174,6 @@ void loop() {
     // Service authenticated OTA uploads on every loop iteration.
     wifiHandleOta();
 
-    // Publish Home Assistant state without blocking the CAN loop.
-    mqttTick();
-
     // 2. Process incoming CAN messages
     //    This reads all available messages and updates g_bmsState
     canPoll();
@@ -208,6 +207,10 @@ void loop() {
         s_lastProtectionCheckTime = millis();
         protectionCheck();
     }
+
+    // One owner updates hysteresis after fresh CAN/protection evaluation.
+    currentTaperTick();
+    mqttTick();
 
     /**
      * NOTE: No delay() here!

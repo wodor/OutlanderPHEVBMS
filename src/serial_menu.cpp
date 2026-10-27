@@ -8,6 +8,7 @@
 #include "bms_data.h"
 #include "protection.h"
 #include "can_handler.h"
+#include "current_taper.h"
 
 // Forward declarations
 static void printDetailedStats();
@@ -69,7 +70,9 @@ static void handleCommand(char cmd) {
             while (!Serial.available() && millis() - start < 5000) delay(10);
             if (Serial.available()) {
                 String s = Serial.readStringUntil('\n');
-                g_bmsSettings.expectedCmusA = strtoul(s.c_str(), NULL, 16) & 0x3FF;
+                BmsSettings settings = currentTaperSettingsSnapshot();
+                settings.expectedCmusA = strtoul(s.c_str(), NULL, 16) & 0x3FF;
+                currentTaperApplySettings(settings);
                 settingsSave();
                 Serial.printf("Updated Bus A mask to: 0x%03X\n", g_bmsSettings.expectedCmusA);
             }
@@ -85,7 +88,9 @@ static void handleCommand(char cmd) {
             while (!Serial.available() && millis() - start < 5000) delay(10);
             if (Serial.available()) {
                 String s = Serial.readStringUntil('\n');
-                g_bmsSettings.expectedCmusB = strtoul(s.c_str(), NULL, 16) & 0x3FF;
+                BmsSettings settings = currentTaperSettingsSnapshot();
+                settings.expectedCmusB = strtoul(s.c_str(), NULL, 16) & 0x3FF;
+                currentTaperApplySettings(settings);
                 settingsSave();
                 Serial.printf("Updated Bus B mask to: 0x%03X\n", g_bmsSettings.expectedCmusB);
             }

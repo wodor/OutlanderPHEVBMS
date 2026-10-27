@@ -1,10 +1,41 @@
 #include "current_taper.h"
+#include "protection.h"
+#include <Preferences.h>
 
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 
 namespace {
+charge::Hysteresis s_hysteresis;
+TaperSnapshot s_snapshot;
+#ifndef UNIT_TEST
+portMUX_TYPE s_taperMutex = portMUX_INITIALIZER_UNLOCKED;
+struct Lock { Lock() { portENTER_CRITICAL(&s_taperMutex); } ~Lock() { portEXIT_CRITICAL(&s_taperMutex); } };
+#else
+struct Lock {};
+#endif
+bool saveHysteresis(const charge::Record& record, void*) {
+    Preferences prefs;
+    if (!prefs.begin("charge_hold", false)) return false;
+    charge::Record check;
+    const bool ok = prefs.putBytes("state", &record, sizeof(record)) == sizeof(record) &&
+        prefs.getBytes("state", &check, sizeof(check)) == sizeof(check) &&
+        memcmp(&record, &check, sizeof(record)) == 0 && charge::valid(check);
+    prefs.end();
+    return ok;
+}
+uint32_t fingerprint(const BmsSettings& s) {
+    const int fields[] = {s.chargeFullVoltageMv, s.chargeReducedVoltageMv, s.chargeStopVoltageMv,
+        s.chargeFullCurrentDa, s.chargeReducedCurrentDa, s.dischargeFullVoltageMv,
+        s.dischargeReducedVoltageMv, s.dischargeStopVoltageMv, s.dischargeFullCurrentDa,
+        s.dischargeReducedCurrentDa, s.expectedCmusA, s.expectedCmusB};
+    uint32_t hash = 2166136261U;
+    for (int value : fields) for (int shift = 0; shift < 32; shift += 8) {
+        hash ^= (uint32_t(value) >> shift) & 255; hash *= 16777619U;
+    }
+    return hash;
+}
 int interpolate(int x, int x0, int x1, int y0, int y1) {
     const long numerator = static_cast<long>(x - x0) * (y1 - y0);
     const long denominator = x1 - x0;
@@ -65,10 +96,82 @@ CurrentLimits currentTaperCalculate(long highestCellMv, long lowestCellMv,
 }
 
 CurrentLimits currentTaperCalculate() {
-    const unsigned long now = millis();
-    if (!g_bmsState.selectedCmusHaveCompleteFreshData(now)) return {0, 0};
-    return currentTaperCalculate(g_bmsState.highestCellMv, g_bmsState.lowestCellMv,
-                                 g_bmsSettings);
+    return currentTaperSnapshot().limits;
+}
+
+BmsSettings currentTaperSettingsSnapshot() { Lock lock; (void)lock; return g_bmsSettings; }
+void currentTaperApplySettings(const BmsSettings& settings) {
+    Lock lock; (void)lock; g_bmsSettings = settings;
+    s_snapshot.limits = {0, 0}; s_snapshot.healthy = false; s_snapshot.reason = 4;
+    s_snapshot.event = s_snapshot.peakMv = s_snapshot.ageMs = 0;
+}
+
+void currentTaperInit() {
+    Preferences prefs;
+    charge::Record record;
+    const bool opened = prefs.begin("charge_hold", false);
+    const bool present = opened && prefs.isKey("state");
+    const bool valid = present && prefs.getBytesLength("state") == sizeof(record) &&
+        prefs.getBytes("state", &record, sizeof(record)) == sizeof(record) && charge::valid(record);
+    if (opened) prefs.end();
+    s_hysteresis.restore(valid ? &record : nullptr, !opened || (present && !valid), millis());
+    Lock lock; (void)lock; s_snapshot = TaperSnapshot();
+}
+
+void currentTaperTick() {
+    const uint32_t now = millis();
+    const BmsSettings settings = currentTaperSettingsSnapshot();
+    const bool complete = g_bmsState.selectedCmusHaveCompleteFreshData(now);
+    const bool valid = currentTaperSettingsValid(settings);
+    const bool supervised = protectionSupervisedOverrideActive();
+    const char* protection = protectionGetStatus();
+    const bool protectionOk = strcmp(protection, "OK") == 0 &&
+        !supervised && !g_bmsState.debugMode &&
+        g_bmsState.highestTemp < settings.overTemp &&
+        g_bmsState.highestCellMv < 4200 && g_bmsState.lowestCellMv > 2800;
+    const bool healthy = complete && valid && protectionOk;
+    TaperSnapshot next;
+    next.minMv = g_bmsState.lowestCellMv; next.maxMv = g_bmsState.highestCellMv;
+    next.fullMv = settings.chargeFullVoltageMv; next.reducedMv = settings.chargeReducedVoltageMv;
+    next.stopMv = settings.chargeStopVoltageMv; next.updatedMs = now;
+    s_hysteresis.update(now, next.maxMv, next.stopMv, healthy, fingerprint(settings),
+                        saveHysteresis, nullptr, complete && valid);
+    // Preserve the existing supervised voltage-recovery path. It can never
+    // release hysteresis or qualify full, but otherwise permitted discharge
+    // must not be suppressed by a charge-only hold (or recovery override).
+    const bool limitsAllowed = complete && valid && g_bmsState.highestTemp < settings.overTemp &&
+        (strcmp(protection, "OK") == 0 || (supervised && strcmp(protection, "SUPERVISED OVERRIDE") == 0));
+    if (limitsAllowed) {
+        next.limits = currentTaperCalculate(next.maxMv, next.minMv, settings);
+        next.limits.chargeDa = s_hysteresis.limit(next.limits.chargeDa, settings.chargeReducedCurrentDa);
+    }
+    next.mode = s_hysteresis.mode(); next.storageError = s_hysteresis.storage_error();
+    next.healthy = healthy && !next.storageError;
+    next.reason = !valid ? 3 : !complete ? 4 : (!protectionOk || next.storageError) ? 5 :
+        next.mode == charge::Mode::TOP_HOLD ? (s_hysteresis.event() ? 6 : 7) :
+        next.maxMv > next.fullMv ? 1 : 0;
+    next.offRemainingMs = s_hysteresis.off_remaining(); next.dwellMs = s_hysteresis.dwell_ms(now);
+    if (next.reason == 6 || next.reason == 7) {
+        next.event = s_hysteresis.event(); next.peakMv = s_hysteresis.peak(); next.ageMs = s_hysteresis.age();
+    }
+    Lock lock; (void)lock;
+    if (fingerprint(g_bmsSettings) != fingerprint(settings)) {
+        // Async configuration changed while this owner was evaluating/saving.
+        next.limits = {0, 0}; next.healthy = false; next.reason = 4;
+        next.event = next.peakMv = next.ageMs = 0;
+    }
+    s_snapshot = next;
+}
+
+TaperSnapshot currentTaperSnapshot() {
+    Lock lock; (void)lock;
+    TaperSnapshot result = s_snapshot;
+    // A stalled owner must not advertise an indefinitely valid cached permit.
+    if (uint32_t(millis() - result.updatedMs) > 1000) {
+        result.limits = {0, 0}; result.healthy = false; result.reason = 4;
+        result.event = result.peakMv = result.ageMs = 0;
+    }
+    return result;
 }
 
 bool currentLimitsShouldPublish(const CurrentLimits& current,

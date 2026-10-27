@@ -182,7 +182,8 @@ static String buildSummaryJson() {
 
     const bool batterySafeToUse = digitalRead(PIN_BATTERY_SAFE_TO_USE) == HIGH;
     const CanStats canStats = canGetStats();
-    const CurrentLimits currentLimits = currentTaperCalculate();
+    const TaperSnapshot taperSnapshot = currentTaperSnapshot();
+    const CurrentLimits currentLimits = taperSnapshot.limits;
     char socCurveText[160] = {};
     formatSocCurvePoints(g_bmsSettings.socCurvePoints,
                          g_bmsSettings.socCurvePointCount,
@@ -208,6 +209,12 @@ static String buildSummaryJson() {
     json += "\"socCurvePoints\":\"" + String(socCurveText) + "\",";
     json += "\"chargeCurrentLimitA\":" + String(currentLimits.chargeDa / 10.0f, 1) + ",";
     json += "\"dischargeCurrentLimitA\":" + String(currentLimits.dischargeDa / 10.0f, 1) + ",";
+    json += "\"chargeHysteresis\":{\"mode\":\"" + String(charge::Hysteresis::name(taperSnapshot.mode)) + "\",";
+    json += "\"resumeMv\":" + String(taperSnapshot.stopMv - 20) + ",";
+    json += "\"offRemainingMs\":" + String(taperSnapshot.offRemainingMs) + ",";
+    json += "\"releaseDwellMs\":" + String(taperSnapshot.dwellMs) + ",";
+    json += "\"reason\":" + String(taperSnapshot.reason) + ",";
+    json += "\"storageError\":" + String(taperSnapshot.storageError ? "true" : "false") + "},";
     json += "\"balancingEnabled\":" + String(g_bmsState.balancingEnabled ? "true" : "false") + ",";
     json += "\"balanceTargetMv\":" + String(g_bmsState.balancingEnabled ? g_bmsState.balanceTargetMv : 0) + ",";
     json += "\"cellsBalancing\":" + String(balancingCount) + ",";
@@ -449,6 +456,7 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             <div class="metric"><div class="metric-value" id="packVoltage">--</div><div class="metric-label">Pack Voltage (V)</div></div>
             <div class="metric"><div class="metric-value" id="modulesOnline">--</div><div class="metric-label">Modules Online</div><div class="metric-note" id="designVoltage">Design --</div></div>
             <div class="metric"><div class="metric-value" id="chargeLimit">--</div><div class="metric-label">Charge Limit (A)</div></div>
+            <div class="metric"><div class="metric-value" id="chargeHysteresis">--</div><div class="metric-label" id="chargeRelease">Charge hysteresis</div></div>
             <div class="metric"><div class="metric-value" id="dischargeLimit">--</div><div class="metric-label">Discharge Limit (A)</div></div>
         </div>
     </section>
@@ -580,6 +588,9 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             document.getElementById('avgTemp').textContent = hasData ? summary.avgTemp : na;
             document.getElementById('maximumTemp').textContent = hasData ? summary.highestTemp : na;
             document.getElementById('chargeLimit').textContent = hasData ? summary.chargeCurrentLimitA.toFixed(1) : na;
+            const hysteresis = summary.chargeHysteresis || {};
+            document.getElementById('chargeHysteresis').textContent = hysteresis.storageError ? 'STORAGE ERROR' : (hysteresis.mode || na);
+            document.getElementById('chargeRelease').textContent = `Resume <= ${hysteresis.resumeMv} mV; off ${Math.ceil((hysteresis.offRemainingMs || 0)/1000)}s; dwell ${Math.floor((hysteresis.releaseDwellMs || 0)/1000)}/60s; reason ${hysteresis.reason}`;
             document.getElementById('dischargeLimit').textContent = hasData ? summary.dischargeCurrentLimitA.toFixed(1) : na;
             document.getElementById('designVoltage').textContent =
                 `Design ${summary.minDesignVoltage.toFixed(1)}–${summary.maxDesignVoltage.toFixed(1)} V`;
@@ -995,8 +1006,10 @@ static void handleApiCommand(AsyncWebServerRequest* request) {
         }
         const uint16_t mask = static_cast<uint16_t>(
             strtoul(request->getParam("mask", true)->value().c_str(), nullptr, 16)) & 0x03FF;
-        if (command == "A") g_bmsSettings.expectedCmusA = mask;
-        else g_bmsSettings.expectedCmusB = mask;
+        BmsSettings settings = currentTaperSettingsSnapshot();
+        if (command == "A") settings.expectedCmusA = mask;
+        else settings.expectedCmusB = mask;
+        currentTaperApplySettings(settings);
         settingsSave();
         String response = "{\"command\":\"" + command + "\",\"mask\":" + String(mask) + "}";
         request->send(200, "application/json", response);
@@ -1054,7 +1067,7 @@ static void handleApiConfig(AsyncWebServerRequest* request) {
         }
     }
 
-    BmsSettings validatedTaper = g_bmsSettings;
+    BmsSettings validatedTaper = currentTaperSettingsSnapshot();
     const bool hasCurrentTaper = request->hasParam("currentTaper", true);
     if (hasCurrentTaper &&
         !parseCurrentTaperConfig(request->getParam("currentTaper", true)->value().c_str(),
@@ -1063,16 +1076,16 @@ static void handleApiConfig(AsyncWebServerRequest* request) {
         return;
     }
     if (hasCurrentTaper) {
-        g_bmsSettings = validatedTaper;
         Serial.println("[Web] Current taper updated atomically");
     }
 
     if (request->hasParam("expectedCmusA", true)) {
-        g_bmsSettings.expectedCmusA = request->getParam("expectedCmusA", true)->value().toInt();
+        validatedTaper.expectedCmusA = request->getParam("expectedCmusA", true)->value().toInt();
     }
     if (request->hasParam("expectedCmusB", true)) {
-        g_bmsSettings.expectedCmusB = request->getParam("expectedCmusB", true)->value().toInt();
+        validatedTaper.expectedCmusB = request->getParam("expectedCmusB", true)->value().toInt();
     }
+    currentTaperApplySettings(validatedTaper);
 
     if (hasSocCurve || hasSocCurvePoints) {
         settingsSetSocCurvePoints(validatedSocPoints, validatedSocPointCount);

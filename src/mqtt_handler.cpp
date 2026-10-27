@@ -58,6 +58,7 @@ int s_lastBalancingCells = -1;
 String s_lastTaperControlState;
 int s_lastBalancingEnabled = -1;
 uint32_t s_heartbeatSequence = 0;
+uint32_t s_endpointBoot = 0;
 unsigned long s_lastBalancingCountPublish = 0;
 int s_lastModuleMaximumTempTenths[BMS_MODULE_COUNT];
 
@@ -388,7 +389,19 @@ void publishFastSummary(unsigned long now) {
     }
     // One retained payload lets the gateway update both directions atomically.
     // The individual topics are for Home Assistant observability only.
-    const CurrentLimits limits = currentTaperCalculate();
+    const TaperSnapshot taper = currentTaperSnapshot();
+    const CurrentLimits limits = taper.limits;
+    // One coherent, non-retained endpoint observation for FoxGW's energy
+    // synchroniser. Never use charge-limit zero alone as proof of full.
+    char endpoint[200];
+    snprintf(endpoint, sizeof(endpoint), "2,%lu,%lu,%u,%u,%ld,%ld,%d,%d,%d,%d,%d,%lu,%lu,%lu",
+        static_cast<unsigned long>(s_endpointBoot),
+        static_cast<unsigned long>(s_heartbeatSequence),
+        taper.healthy ? 1U : 0U, taper.reason, taper.minMv, taper.maxMv,
+        taper.fullMv, taper.reducedMv, taper.stopMv, limits.chargeDa, limits.dischargeDa,
+        static_cast<unsigned long>(taper.event), static_cast<unsigned long>(taper.peakMv),
+        static_cast<unsigned long>(taper.ageMs));
+    publish(root + "soc_endpoint", String(endpoint), false);
     const String currentLimits = String(limits.chargeDa / 10.0f, 1) + "," +
                                  String(limits.dischargeDa / 10.0f, 1);
     const bool limitUpdateDue = !s_currentLimitsPublished ||
@@ -494,7 +507,9 @@ void handleMqttCommand(char* topic, byte* payload, unsigned int length) {
     if (!receivedTopic.startsWith(taperPrefix) || !receivedTopic.endsWith(setSuffix)) return;
     const String parameter = receivedTopic.substring(
         taperPrefix.length(), receivedTopic.length() - setSuffix.length());
-    if (parseCurrentTaperParameter(parameter.c_str(), command.c_str(), g_bmsSettings)) {
+    BmsSettings candidate = currentTaperSettingsSnapshot();
+    if (parseCurrentTaperParameter(parameter.c_str(), command.c_str(), candidate)) {
+        currentTaperApplySettings(candidate);
         settingsSave();
         Serial.printf("[MQTT] Updated current taper parameter %s\n", parameter.c_str());
     } else {
@@ -536,6 +551,8 @@ bool connect() {
 }  // namespace
 
 void mqttInit() {
+    s_endpointBoot = esp_random();
+    if (s_endpointBoot == 0) s_endpointBoot = 1;
     for (int module = 0; module < BMS_MODULE_COUNT; module++) {
         s_lastModulePublishedMv[module] = INVALID_CELL_MV;
         s_lastModuleMaximumTempTenths[module] = -10000;
